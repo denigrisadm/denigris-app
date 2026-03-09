@@ -72,29 +72,59 @@ div[data-testid="stVerticalBlockBorderWrapper"]{padding:0!important;}
 .topbar-name{font-size:13px;color:#fff;font-weight:700;}
 .topbar-role{font-size:10px;color:#c8a84b;text-transform:uppercase;letter-spacing:1.5px;}
 
-/* ── BOTTOM NAV (Mobile-first) ── */
-.bottom-nav{
-  position:fixed; bottom:0; left:0; right:0;
-  background:#fff;
-  border-top:1px solid #e0e4ee;
-  display:flex; align-items:stretch;
-  z-index:9998;
-  box-shadow:0 -4px 20px rgba(0,0,0,0.08);
+/* ── NAVEGAÇÃO (responsiva) ── */
+div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] > div > div > .stButton > button {
+  background:#fff!important;
+  color:#4a5568!important;
+  border:1.5px solid #e0e4ee!important;
+  border-radius:14px!important;
+  font-weight:700!important;
+  font-size:11px!important;
+  padding:10px 4px!important;
+  box-shadow:0 1px 4px rgba(0,0,0,0.05)!important;
+  transition:all 0.15s!important;
+  min-height:48px!important;
+  letter-spacing:0!important;
 }
-.nav-item{
-  flex:1; display:flex; flex-direction:column;
-  align-items:center; justify-content:center;
-  padding:8px 4px 10px;
-  cursor:pointer; border:none;
-  background:transparent; color:#8a95b0;
-  font-size:10px; font-weight:600;
-  text-transform:uppercase; letter-spacing:0.5px;
-  gap:3px; transition:all 0.2s;
-  border-top:2px solid transparent;
-  text-decoration:none;
+div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] > div > div > .stButton > button:hover {
+  background:#f0f4ff!important;
+  color:#0a1628!important;
+  border-color:#0a1628!important;
+  transform:none!important;
 }
-.nav-item.active{color:#0a1628;border-top:2px solid #c8a84b;}
-.nav-item-icon{font-size:18px;}
+/* botão Sair */
+div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:last-child > div > div > .stButton > button {
+  background:#fff0f0!important;
+  color:#cc3300!important;
+  border-color:#ffcccc!important;
+}
+
+/* ── MOBILE ── */
+@media (max-width: 640px) {
+  .page-wrap{padding:12px 10px 80px 10px!important;}
+  .kpi-grid{grid-template-columns:repeat(2,1fr)!important;gap:8px!important;}
+  .kpi-grid-3{grid-template-columns:repeat(2,1fr)!important;}
+  .kpi-value{font-size:22px!important;}
+  .topbar{padding:0 12px!important;}
+  .topbar-info{display:none!important;}
+  .hero-name{font-size:15px!important;}
+  .hero-stats{flex-wrap:wrap!important;}
+  .hero-stat{min-width:80px!important;}
+  .info-label{width:90px!important;min-width:90px!important;}
+  div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] > div > div > .stButton > button {
+    font-size:10px!important;
+    padding:8px 2px!important;
+    min-height:44px!important;
+    border-radius:10px!important;
+  }
+}
+
+@media (min-width: 641px) {
+  div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] > div > div > .stButton > button {
+    font-size:12px!important;
+    padding:12px 8px!important;
+  }
+}
 
 /* ── CONTEÚDO ── */
 .page-wrap{padding:20px 16px 90px 16px;max-width:900px;margin:0 auto;}
@@ -560,9 +590,9 @@ perfil    = u_data.get("perfil", "vendedor")
 nome      = u_data.get("nome", u_key)
 cons_key  = u_data.get("consultor_key", u_key)
 
-PAGINAS_GESTOR  = [("busca","🔍","Busca"),("emplacamentos","📍","Minha Área"),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oprtunidades"),("admin","⚙️","Admin")]
-PAGINAS_GERENTE = [("busca","🔍","Busca"),("emplacamentos","📍","Minha Área"),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportunidades")]
-PAGINAS_VEND    = [("busca","🔍","Busca"),("emplacamentos","📍","Minha Área"),("carteira","📋","Carteira"),("oportunidades","🎯","Oportunidades")]
+PAGINAS_GESTOR  = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacamentos"),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun."),("admin","⚙️","Admin")]
+PAGINAS_GERENTE = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacamentos"),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun.")]
+PAGINAS_VEND    = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacamentos"),("carteira","📋","Carteira"),("oportunidades","🎯","Oportun.")]
 
 if perfil == "gestor": PAGINAS = PAGINAS_GESTOR
 elif perfil == "gerente": PAGINAS = PAGINAS_GERENTE
@@ -1082,12 +1112,18 @@ elif pagina == "carteira":
         ultima_emp = df_emp.groupby("CNPJ_NORM")["Data emplacamento"].max().reset_index()
         ultima_emp.columns = ["CNPJ_NORM","UltimaCompra"]
         cart_view = cart_view.merge(ultima_emp, on="CNPJ_NORM", how="left")
-        cart_view["MesesSem"] = cart_view["UltimaCompra"].apply(
-            lambda x: relativedelta(today,x).years*12+relativedelta(today,x).months if pd.notna(x) else 999)
+        def calc_meses(x):
+            try:
+                if pd.isna(x): return 999
+                rd = relativedelta(today, pd.Timestamp(x))
+                return int(rd.years * 12 + rd.months)
+            except: return 999
+        cart_view["MesesSem"] = cart_view["UltimaCompra"].apply(calc_meses)
     else:
         cart_view["UltimaCompra"] = pd.NaT
         cart_view["MesesSem"] = 999
 
+    cart_view["MesesSem"] = pd.to_numeric(cart_view["MesesSem"], errors="coerce").fillna(999).astype(int)
     inativos_2a = cart_view[cart_view["MesesSem"] > 24]
     top_compradores = cart_view[cart_view["MesesSem"] <= 24].sort_values("MesesSem")
 
@@ -1413,32 +1449,90 @@ elif pagina == "admin":
         st.dataframe(df_u, use_container_width=True, hide_index=True)
 
         st.markdown('<div class="sec-title">➕ Criar / Editar Usuário</div>', unsafe_allow_html=True)
+
+        # Obter lista de consultores das planilhas
+        consultores_area = []
+        if df_area is not None:
+            consultores_area = sorted([c for c in df_area["Consultor"].unique() if c != "ZONA LIVRE"])
+        vendedores_cart = []
+        if df_cart is not None:
+            vendedores_cart = sorted(df_cart["VENDEDOR"].dropna().unique().tolist())
+        # União das duas listas
+        todos_consultores = sorted(set(consultores_area + vendedores_cart))
+
+        st.markdown("""
+        <div class="alert-blue" style="margin-bottom:14px;">
+        💡 <strong>Como funciona o vínculo:</strong><br>
+        • Para <strong>vendedores</strong> — selecione o nome exato da planilha de Área Operacional.<br>
+        • O sistema vai filtrar automaticamente a carteira e os emplacamentos desse consultor.<br>
+        • Para <strong>gerente/gestor</strong> — o vínculo com consultor não é necessário.
+        </div>
+        """, unsafe_allow_html=True)
+
         eu1, eu2 = st.columns(2)
         with eu1:
-            new_login   = st.text_input("Login (maiúsculas)", placeholder="EX: JOAO").strip().upper()
-            new_nome    = st.text_input("Nome completo", placeholder="João Silva")
-            new_perfil  = st.selectbox("Perfil", ["vendedor","gerente","gestor"])
-            new_cons_key= st.text_input("Chave do consultor (para vendedores)", placeholder="JOAO SILVA")
+            new_login  = st.text_input("Login (maiúsculas)", placeholder="EX: RENATA").strip().upper()
+            new_nome   = st.text_input("Nome completo", placeholder="Renata Bellon")
+            new_perfil = st.selectbox("Perfil", ["vendedor","gerente","gestor"])
+
+            if new_perfil == "vendedor":
+                if todos_consultores:
+                    opcoes_cons = ["— Selecione —"] + todos_consultores
+                    sel_cons_idx = st.selectbox(
+                        "Consultor vinculado (Área Operacional / Carteira):",
+                        opcoes_cons,
+                        help="Selecione o nome exatamente como aparece nas planilhas"
+                    )
+                    new_cons_key = "" if sel_cons_idx == "— Selecione —" else sel_cons_idx
+                    if new_cons_key:
+                        # Verificar se existe na área e na carteira
+                        na_area  = new_cons_key in consultores_area
+                        na_cart  = new_cons_key in vendedores_cart
+                        col_v1, col_v2 = st.columns(2)
+                        with col_v1:
+                            st.markdown(f'<div style="font-size:12px;padding:6px 10px;border-radius:8px;background:{"#e8f8ee" if na_area else "#fff4e0"};color:{"#007030" if na_area else "#a05000"};">{"✅" if na_area else "⚠️"} Área Operacional</div>', unsafe_allow_html=True)
+                        with col_v2:
+                            st.markdown(f'<div style="font-size:12px;padding:6px 10px;border-radius:8px;background:{"#e8f8ee" if na_cart else "#fff4e0"};color:{"#007030" if na_cart else "#a05000"};">{"✅" if na_cart else "⚠️"} Carteira</div>', unsafe_allow_html=True)
+                else:
+                    st.warning("⚠️ Carregue os dados primeiro para ver a lista de consultores.")
+                    new_cons_key = st.text_input("Ou digite manualmente:", placeholder="EX: RENATA BELLON").strip().upper()
+            else:
+                new_cons_key = ""
+
         with eu2:
-            new_senha   = st.text_input("Senha", type="password", placeholder="••••••••")
-            new_senha2  = st.text_input("Confirmar senha", type="password", placeholder="••••••••")
+            new_senha  = st.text_input("Senha", type="password", placeholder="••••••••")
+            new_senha2 = st.text_input("Confirmar senha", type="password", placeholder="••••••••")
+
+            # Preview do usuário
+            if new_login and new_perfil == "vendedor" and new_cons_key:
+                cnt_cart = len(df_cart[df_cart["VENDEDOR"].str.upper() == new_cons_key.upper()]) if df_cart is not None else 0
+                st.markdown(f"""
+                <div style="background:#f8f9fc;border:1.5px solid #e0e4ee;border-radius:12px;padding:14px;margin-top:8px;">
+                    <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#8a95b0;margin-bottom:8px;">Preview do Acesso</div>
+                    <div style="font-size:13px;font-weight:700;color:#0a1628;">👤 {new_login}</div>
+                    <div style="font-size:12px;color:#4a5568;margin-top:4px;">🗂️ Consultor: <strong>{new_cons_key}</strong></div>
+                    <div style="font-size:12px;color:#4a5568;margin-top:2px;">📋 Clientes na carteira: <strong>{cnt_cart}</strong></div>
+                </div>
+                """, unsafe_allow_html=True)
 
         if st.button("💾 Salvar Usuário", use_container_width=True):
             if not new_login or not new_nome or not new_senha:
                 st.error("Preencha login, nome e senha.")
             elif new_senha != new_senha2:
                 st.error("Senhas não conferem.")
+            elif new_perfil == "vendedor" and not new_cons_key:
+                st.error("Selecione o consultor vinculado.")
             else:
                 USERS[new_login] = {
                     "senha_hash": hash_senha(new_senha),
                     "perfil": new_perfil,
                     "nome": new_nome,
-                    "consultor_key": new_cons_key or new_login,
-                    "ultimo_acesso": USERS.get(new_login,{}).get("ultimo_acesso")
+                    "consultor_key": new_cons_key.upper() if new_cons_key else new_login,
+                    "ultimo_acesso": USERS.get(new_login, {}).get("ultimo_acesso")
                 }
                 save_users(USERS)
                 st.session_state.users_db = USERS
-                st.success(f"✅ Usuário {new_login} salvo!")
+                st.success(f"✅ Usuário **{new_login}** salvo! Vinculado a: {new_cons_key or '—'}")
                 st.rerun()
 
         st.markdown('<div class="sec-title">🗑️ Excluir Usuário</div>', unsafe_allow_html=True)
