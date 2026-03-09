@@ -506,13 +506,32 @@ def get_munic_area(consultor, df_area):
     return municipios, cep_ranges
 
 def emp_da_area(df_emp, municipios, cep_ranges):
-    if df_emp is None: return pd.DataFrame()
-    mask_cidade = df_emp["NO_CIDADE_NORM"].isin(municipios)
+    if df_emp is None or df_emp.empty: return pd.DataFrame()
+    # Normalizar municipios para comparação sem acento/espaço
+    munic_set = set(municipios)
+    # Também tentar sem espaços e abreviações comuns
+    munic_set_alt = set()
+    for m in municipios:
+        munic_set_alt.add(m.replace(" ",""))
+        munic_set_alt.add(re.sub(r'\bSAO\b','SAO',m))
+        munic_set_alt.add(re.sub(r'\bSTO\b','SANTO',m))
+
+    mask_cidade = df_emp["NO_CIDADE_NORM"].isin(munic_set)
+    # fallback: comparação parcial para casos como "SAO PAULO" vs "SÃO PAULO" (já normalizados)
+    if not mask_cidade.any() and municipios:
+        mask_cidade = df_emp["NO_CIDADE_NORM"].apply(
+            lambda c: any(c in m or m in c for m in munic_set) if c else False
+        )
+
     if cep_ranges:
         mask_cep = pd.Series(False, index=df_emp.index)
         for ini, fim in cep_ranges:
             if ini and fim:
-                mask_cep |= ((df_emp["CEP_norm"] >= ini) & (df_emp["CEP_norm"] <= fim) & (df_emp["CEP_norm"] != ""))
+                mask_cep |= (
+                    (df_emp["CEP_norm"] != "") &
+                    (df_emp["CEP_norm"] >= ini) &
+                    (df_emp["CEP_norm"] <= fim)
+                )
         return df_emp[mask_cidade | mask_cep].copy()
     return df_emp[mask_cidade].copy()
 
@@ -937,17 +956,22 @@ elif pagina == "emplacamentos":
         sel_cons = cons_key
 
     # Filtro de mês
-    mes_ant = today.month - 1 if today.month > 1 else 12
-    ano_ant = today.year if today.month > 1 else today.year - 1
+    # Último mês/ano com dados reais (não necessariamente o mês atual)
+    ultimo_registro = df_emp.dropna(subset=["Data emplacamento"])["Data emplacamento"].max()
+    ano_default  = int(ultimo_registro.year)  if pd.notna(ultimo_registro) else today.year
+    mes_default  = int(ultimo_registro.month) if pd.notna(ultimo_registro) else today.month
+
     anos_disp = sorted(df_emp["Ano"].unique(), reverse=True)
     fc1, fc2 = st.columns(2)
     with fc1:
-        sel_ano = st.selectbox("Ano:", anos_disp, index=anos_disp.index(ano_ant) if ano_ant in anos_disp else 0)
+        idx_ano = anos_disp.index(ano_default) if ano_default in anos_disp else 0
+        sel_ano = st.selectbox("Ano:", anos_disp, index=idx_ano)
     with fc2:
         meses_disp = sorted(df_emp[df_emp["Ano"]==sel_ano]["Mes"].unique().tolist())
         mes_labels = [MESES_PT[m] for m in meses_disp]
-        mes_def = MESES_PT.get(mes_ant, mes_labels[-1]) if mes_ant in meses_disp else mes_labels[-1]
-        sel_mes_lbl = st.selectbox("Mês:", mes_labels, index=mes_labels.index(mes_def) if mes_def in mes_labels else len(mes_labels)-1)
+        mes_def_lbl = MESES_PT.get(mes_default, mes_labels[-1])
+        idx_mes = mes_labels.index(mes_def_lbl) if mes_def_lbl in mes_labels else len(mes_labels)-1
+        sel_mes_lbl = st.selectbox("Mês:", mes_labels, index=idx_mes)
         sel_mes = meses_disp[mes_labels.index(sel_mes_lbl)]
 
     # Obter área
@@ -966,6 +990,19 @@ elif pagina == "emplacamentos":
 
     emp_area = emp_da_area(df_emp, munic_area, cep_ranges)
     emp_mes  = emp_area[(emp_area["Ano"]==sel_ano) & (emp_area["Mes"]==sel_mes)].copy()
+
+    # ── DIAGNÓSTICO (visível quando zerado) ──
+    total_emp_geral = len(df_emp[(df_emp["Ano"]==sel_ano) & (df_emp["Mes"]==sel_mes)])
+    if emp_mes.empty and total_emp_geral > 0:
+        with st.expander(f"⚠️ {total_emp_geral} emplacamentos encontrados no período mas nenhum bateu com a área — clique para diagnosticar", expanded=True):
+            st.markdown(f"**Cidades nos emplacamentos ({sel_mes_lbl}/{sel_ano}):**")
+            cids_emp = df_emp[(df_emp["Ano"]==sel_ano) & (df_emp["Mes"]==sel_mes)]["NO_CIDADE_NORM"].value_counts().head(10)
+            st.dataframe(cids_emp.reset_index().rename(columns={"index":"Cidade","NO_CIDADE_NORM":"Qtd"}), hide_index=True)
+            st.markdown("**Cidades na Área Operacional (amostra):**")
+            st.write(munic_area[:20])
+            st.markdown("**💡 Solução:** Os nomes das cidades nos emplacamentos precisam bater com os da Área Operacional. Verifique se há diferenças de grafia (ex: 'SAO PAULO' vs 'SÃO PAULO').")
+    elif emp_mes.empty and total_emp_geral == 0:
+        st.info(f"ℹ️ Não há emplacamentos registrados em {sel_mes_lbl}/{sel_ano} na base de dados.")
 
     # ── 4 QUADRANTES ──
     st.markdown(f'<div class="sec-title">📊 Visão do Período — {sel_mes_lbl} / {sel_ano}</div>', unsafe_allow_html=True)
@@ -1268,12 +1305,14 @@ elif pagina == "gestao":
     anos_g = sorted(df_emp["Ano"].unique(), reverse=True)
     cons_g = ["Todos"] + (sorted(df_area[df_area["Consultor"]!="ZONA LIVRE"]["Consultor"].str.title().unique().tolist()) if df_area is not None else [])
     marcas_g = ["Todas"] + sorted(df_emp["Marca"].dropna().unique().tolist())
+    # Meses com dados reais
+    meses_com_dados = sorted(df_emp["Mes"].unique().tolist())
+    mes_labels_dados = [MESES_PT[m] for m in meses_com_dados]
 
     f1,f2,f3 = st.columns(3)
     with f1: anos_s_g = st.multiselect("Anos", anos_g, default=anos_g)
     with f2:
-        mes_labels_g = list(MESES_PT.values())
-        mes_s_g = st.multiselect("Meses", mes_labels_g, default=mes_labels_g)
+        mes_s_g = st.multiselect("Meses", mes_labels_dados, default=mes_labels_dados)
         mes_nums_g = [k for k,v in MESES_PT.items() if v in mes_s_g]
     with f3: cons_s_g = st.selectbox("Consultor", cons_g)
 
@@ -1375,9 +1414,17 @@ elif pagina == "oportunidades":
         tc2 = df_opp.groupby("CNPJ_NORM").size().reset_index(name="TotalCompras")
         inf = df_opp.groupby("CNPJ_NORM").agg(Nome=("NOMEPROPRIETARIO","first"),CNPJ=("CPFCNPJPROPRIETARIO","first"),Cidade=("NO_CIDADE","first")).reset_index()
         di = ul.merge(tc2,on="CNPJ_NORM").merge(inf,on="CNPJ_NORM")
-        di = di[di["UltimaCompra"].notna()]
-        di["Meses"] = di["UltimaCompra"].apply(lambda x: relativedelta(today,x).years*12+relativedelta(today,x).months)
-        di = di[(di["UltimaCompra"].dt.year < ano_a) & (di["Meses"]>12)].sort_values("Meses",ascending=False)
+        di = di[di["UltimaCompra"].notna()].copy()
+        di["UltimaCompra"] = pd.to_datetime(di["UltimaCompra"], errors="coerce")
+        di = di[di["UltimaCompra"].notna()].copy()
+        def _meses_desde(x):
+            try:
+                rd = relativedelta(today, pd.Timestamp(x))
+                return int(rd.years * 12 + rd.months)
+            except: return 0
+        di["Meses"] = di["UltimaCompra"].apply(_meses_desde)
+        di["Meses"] = pd.to_numeric(di["Meses"], errors="coerce").fillna(0).astype(int)
+        di = di[di["Meses"] > 12].sort_values("Meses", ascending=False)
         if df_cart is not None:
             vm = df_cart.set_index("CNPJ_NORM")["VENDEDOR"].to_dict()
             di["Vendedor"] = di["CNPJ_NORM"].map(vm).fillna("—")
