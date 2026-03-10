@@ -303,9 +303,16 @@ def norm_cnpj(s):
     return re.sub(r"[.\-/]", "", str(s)).strip()
 
 def norm_cep(v):
-    """Remove tudo que não seja dígito e retorna string de 8 chars."""
+    """Normaliza CEP para 8 dígitos. Trata float (ex: 5113020.0 → 05113020)."""
     if pd.isna(v): return ""
-    return re.sub(r"\D", "", str(v)).zfill(8)[:8]
+    try:
+        # Se for float/int, converter para int primeiro para remover .0
+        n = int(float(v))
+        return str(n).zfill(8)[:8]
+    except (ValueError, TypeError):
+        # Se for string com formatação (ex: 05113-020), remover não-dígitos
+        s = re.sub(r"\D", "", str(v))
+        return s.zfill(8)[:8] if s else ""
 
 def safe_str(v, fallback="—"):
     s = str(v).strip() if not pd.isna(v) else ""
