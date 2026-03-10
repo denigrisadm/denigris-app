@@ -635,6 +635,324 @@ def emp_da_area(df_emp, cidades_reais, cep_ranges):
     mask_final = mask_cep | mask_cidade
     return df_emp[mask_final].copy()
 
+def gerar_relatorio_emplacamento(emp_mes, emp_area, cnpjs_carteira_set, todos_cnpjs_cart,
+                                  sel_mes_lbl, sel_ano, consultor_nome):
+    """Gera relatório XLSX estilizado igual ao modelo — cabeçalho colorido + tabela de dados."""
+    from openpyxl import Workbook
+    from openpyxl.styles import (Font, PatternFill, Alignment, Border, Side,
+                                  GradientFill)
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"{sel_mes_lbl[:3]} {sel_ano}"
+
+    # ── Paletas ──
+    PRETO    = "FF1A1A1A"
+    BRANCO   = "FFFFFFFF"
+    VERDE    = "FF1E7E34"
+    VERDE_CL = "FF28A745"
+    VERMELHO = "FFC0392B"
+    AZUL     = "FF1A3F6F"
+    CINZA_CL = "FFF2F2F2"
+    AMARELO  = "FFFFF2CC"
+    ROSA_CL  = "FFFCE8E8"
+    AZUL_CL  = "FFE8F0FF"
+
+    thin = Side(style="thin", color="FFCCCCCC")
+    borda_fina = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    def fill(hex_color):
+        return PatternFill("solid", start_color=hex_color, end_color=hex_color)
+
+    def font(bold=False, color=BRANCO, size=11, italic=False):
+        return Font(name="Arial", bold=bold, color=color, size=size, italic=italic)
+
+    def aln(h="center", v="center", wrap=False):
+        return Alignment(horizontal=h, vertical=v, wrap_text=wrap)
+
+    # ── Colunas ──
+    ws.column_dimensions["A"].width = 14   # Data
+    ws.column_dimensions["B"].width = 22   # CNPJ
+    ws.column_dimensions["C"].width = 40   # Cliente
+    ws.column_dimensions["D"].width = 28   # Modelo
+    ws.column_dimensions["E"].width = 22   # Chassi
+    ws.column_dimensions["F"].width = 25   # Concessionária
+    ws.column_dimensions["G"].width = 18   # Cidade
+
+    # ════════════════════════════════════
+    # LINHA 1 — Título principal
+    # ════════════════════════════════════
+    ws.merge_cells("A1:G1")
+    ws.row_dimensions[1].height = 36
+    c = ws["A1"]
+    periodo = f"{sel_mes_lbl.upper()} DE {sel_ano}"
+    c.value = f"EMPLACAMENTO ACUMULADO — {periodo}"
+    c.font = Font(name="Arial", bold=True, color=BRANCO, size=14)
+    c.fill = fill(PRETO)
+    c.alignment = aln("center")
+
+    # Consultor
+    ws.merge_cells("A2:G2")
+    ws.row_dimensions[2].height = 18
+    c = ws["A2"]
+    c.value = f"Consultor: {consultor_nome.title()}"
+    c.font = Font(name="Arial", bold=False, color="FFAAAAAA", size=10, italic=True)
+    c.fill = fill(PRETO)
+    c.alignment = aln("center")
+
+    # ════════════════════════════════════
+    # LINHAS 3-4 — Cabeçalhos dos grupos
+    # ════════════════════════════════════
+    ws.row_dimensions[3].height = 30
+    ws.row_dimensions[4].height = 26
+
+    # Calcular grupos
+    g1 = emp_mes[~emp_mes["CNPJ_NORM"].isin(todos_cnpjs_cart)]
+    g2 = emp_mes[emp_mes["CNPJ_NORM"].isin(cnpjs_carteira_set) & ~is_denigris(emp_mes["Concessionário"])]
+    g3 = emp_mes[is_denigris(emp_mes["Concessionário"])]
+    total = len(emp_mes)
+
+    def pct(n): return f"{round(n/total*100) if total else 0}%"
+
+    # Col A: total emplacamentos (verde)
+    ws["A3"].value = "EMPLACAMENTOS"
+    ws["A3"].font = font(bold=True, color=BRANCO, size=10)
+    ws["A3"].fill = fill(VERDE_CL)
+    ws["A3"].alignment = aln()
+    ws["A3"].border = borda_fina
+
+    ws["A4"].value = total
+    ws["A4"].font = font(bold=True, color=BRANCO, size=13)
+    ws["A4"].fill = fill(VERDE_CL)
+    ws["A4"].alignment = aln()
+    ws["A4"].border = borda_fina
+
+    # Linha com "100%"
+    ws.row_dimensions[5].height = 20
+    ws["A5"].value = "100%"
+    ws["A5"].font = font(bold=True, color=BRANCO, size=11)
+    ws["A5"].fill = fill(VERDE_CL)
+    ws["A5"].alignment = aln()
+    ws["A5"].border = borda_fina
+
+    # Cols B-C: Não na carteira (preto)
+    ws.merge_cells("B3:C3")
+    ws.merge_cells("B4:C4")
+    ws.merge_cells("B5:C5")
+    ws["B3"].value = "EMPLACAMENTO DE VEÍCULOS QUE NÃO ESTÃO NA CARTEIRA"
+    ws["B3"].font = font(bold=True, color=BRANCO, size=9)
+    ws["B3"].fill = fill(PRETO)
+    ws["B3"].alignment = aln("center", wrap=True)
+    ws["B3"].border = borda_fina
+    ws["B4"].value = len(g1)
+    ws["B4"].font = font(bold=True, color=BRANCO, size=13)
+    ws["B4"].fill = fill(PRETO)
+    ws["B4"].alignment = aln()
+    ws["B4"].border = borda_fina
+    ws["B5"].value = pct(len(g1))
+    ws["B5"].font = font(bold=True, color=BRANCO, size=11)
+    ws["B5"].fill = fill(PRETO)
+    ws["B5"].alignment = aln()
+    ws["B5"].border = borda_fina
+
+    # Cols D-E: Carteira + concorrência (vermelho)
+    ws.merge_cells("D3:E3")
+    ws.merge_cells("D4:E4")
+    ws.merge_cells("D5:E5")
+    ws["D3"].value = "EMPLACAMENTO DE VEÍCULOS QUE ESTÃO NA CARTEIRA E COMPROU NA CONCORRÊNCIA"
+    ws["D3"].font = font(bold=True, color=BRANCO, size=9)
+    ws["D3"].fill = fill(VERMELHO)
+    ws["D3"].alignment = aln("center", wrap=True)
+    ws["D3"].border = borda_fina
+    ws["D4"].value = len(g2)
+    ws["D4"].font = font(bold=True, color=BRANCO, size=13)
+    ws["D4"].fill = fill(VERMELHO)
+    ws["D4"].alignment = aln()
+    ws["D4"].border = borda_fina
+    ws["D5"].value = pct(len(g2))
+    ws["D5"].font = font(bold=True, color=BRANCO, size=11)
+    ws["D5"].fill = fill(VERMELHO)
+    ws["D5"].alignment = aln()
+    ws["D5"].border = borda_fina
+
+    # Cols F-G: De Nigris (azul)
+    ws.merge_cells("F3:G3")
+    ws.merge_cells("F4:G4")
+    ws.merge_cells("F5:G5")
+    ws["F3"].value = "EMPLACAMENTO DE VEÍCULOS QUE COMPROU NA DE NIGRIS"
+    ws["F3"].font = font(bold=True, color=BRANCO, size=9)
+    ws["F3"].fill = fill(AZUL)
+    ws["F3"].alignment = aln("center", wrap=True)
+    ws["F3"].border = borda_fina
+    ws["F4"].value = len(g3)
+    ws["F4"].font = font(bold=True, color=BRANCO, size=13)
+    ws["F4"].fill = fill(AZUL)
+    ws["F4"].alignment = aln()
+    ws["F4"].border = borda_fina
+    ws["F5"].value = pct(len(g3))
+    ws["F5"].font = font(bold=True, color=BRANCO, size=11)
+    ws["F5"].fill = fill(AZUL)
+    ws["F5"].alignment = aln()
+    ws["F5"].border = borda_fina
+
+    # ════════════════════════════════════
+    # LINHA 6 — Total clientes + % De Nigris
+    # ════════════════════════════════════
+    ws.row_dimensions[6].height = 22
+    ws.merge_cells("A6:C6")
+    ws["A6"].value = f"TOTAL DE CLIENTES ÚNICOS: {emp_mes['CNPJ_NORM'].nunique()}"
+    ws["A6"].font = font(bold=True, color="FF1A1A1A", size=10)
+    ws["A6"].fill = fill("FFE0E0E0")
+    ws["A6"].alignment = aln("left")
+    ws["A6"].border = borda_fina
+
+    nigris_uniq = g3["CNPJ_NORM"].nunique()
+    tot_uniq    = emp_mes["CNPJ_NORM"].nunique()
+    ws.merge_cells("D6:E6")
+    ws["D6"].value = f"De Nigris: {nigris_uniq} clientes ({round(nigris_uniq/tot_uniq*100) if tot_uniq else 0}%)"
+    ws["D6"].font = font(bold=True, color=BRANCO, size=10)
+    ws["D6"].fill = fill(AZUL)
+    ws["D6"].alignment = aln("center")
+    ws["D6"].border = borda_fina
+
+    ws.merge_cells("F6:G6")
+    ws["F6"].value = ""
+    ws["F6"].fill = fill("FFE0E0E0")
+    ws["F6"].border = borda_fina
+
+    # ════════════════════════════════════
+    # LINHA 7 — TOP 3 CLIENTES (histórico da área)
+    # ════════════════════════════════════
+    ws.row_dimensions[7].height = 20
+    ws.merge_cells("A7:G7")
+    ws["A7"].value = "🏆  TOP 3 CLIENTES — HISTÓRICO DA ÁREA"
+    ws["A7"].font = Font(name="Arial", bold=True, color=BRANCO, size=10)
+    ws["A7"].fill = fill("FF2C3E50")
+    ws["A7"].alignment = aln("left")
+    ws["A7"].border = borda_fina
+
+    top3 = emp_area.groupby(["CNPJ_NORM","NOMEPROPRIETARIO","NO_CIDADE"]).agg(
+        Total=("Chassi","count"),
+        Nigris=("Concessionário", lambda x: is_denigris(x).sum())
+    ).reset_index().sort_values("Total", ascending=False).head(3).reset_index(drop=True)
+
+    medals = ["🥇", "🥈", "🥉"]
+    for ti, trow in top3.iterrows():
+        r = 8 + ti
+        ws.row_dimensions[r].height = 20
+        pct_n = round(trow["Nigris"]/trow["Total"]*100) if trow["Total"] > 0 else 0
+        ws.merge_cells(f"A{r}:B{r}")
+        ws[f"A{r}"].value = f"{medals[ti]}  {str(trow['NOMEPROPRIETARIO'])[:38]}"
+        ws[f"A{r}"].font = Font(name="Arial", bold=True, color="FF1A1A1A", size=10)
+        ws[f"A{r}"].fill = fill(CINZA_CL if ti % 2 == 0 else BRANCO)
+        ws[f"A{r}"].alignment = aln("left")
+        ws[f"A{r}"].border = borda_fina
+
+        ws.merge_cells(f"C{r}:D{r}")
+        ws[f"C{r}"].value = f"📍 {safe_str(trow['NO_CIDADE'])}"
+        ws[f"C{r}"].font = Font(name="Arial", size=10, color="FF555555")
+        ws[f"C{r}"].fill = fill(CINZA_CL if ti % 2 == 0 else BRANCO)
+        ws[f"C{r}"].alignment = aln("left")
+        ws[f"C{r}"].border = borda_fina
+
+        ws.merge_cells(f"E{r}:F{r}")
+        ws[f"E{r}"].value = f"{int(trow['Total'])} caminhões — {pct_n}% De Nigris"
+        cor_t = "FF1E7E34" if pct_n >= 50 else "FFC0392B"
+        ws[f"E{r}"].font = Font(name="Arial", bold=True, size=10, color=cor_t)
+        ws[f"E{r}"].fill = fill(CINZA_CL if ti % 2 == 0 else BRANCO)
+        ws[f"E{r}"].alignment = aln("center")
+        ws[f"E{r}"].border = borda_fina
+
+        ws[f"G{r}"].fill = fill(CINZA_CL if ti % 2 == 0 else BRANCO)
+        ws[f"G{r}"].border = borda_fina
+
+    # ════════════════════════════════════
+    # LINHA 11+ — Cabeçalho da tabela de dados
+    # ════════════════════════════════════
+    header_row = 11
+    ws.row_dimensions[header_row].height = 24
+    headers = ["DATA EMPLAC.", "CNPJ", "CLIENTE", "MODELO", "CHASSI", "CONCESSIONÁRIA", "CIDADE"]
+    for ci, h in enumerate(headers, 1):
+        cell = ws.cell(row=header_row, column=ci)
+        cell.value = h
+        cell.font = font(bold=True, color=BRANCO, size=10)
+        cell.fill = fill("FF1A1A1A")
+        cell.alignment = aln("center")
+        cell.border = borda_fina
+
+    # ════════════════════════════════════
+    # DADOS — todos os emplacamentos do mês
+    # ════════════════════════════════════
+    emp_sorted = emp_mes.sort_values("Data emplacamento").reset_index(drop=True)
+
+    for di, drow in emp_sorted.iterrows():
+        r = header_row + 1 + di
+        ws.row_dimensions[r].height = 18
+
+        cnpj_n = str(drow.get("CNPJ_NORM",""))
+        is_cart = cnpj_n in cnpjs_carteira_set
+        is_dn   = is_denigris(pd.Series([drow.get("Concessionário","")])).iloc[0]
+        is_conc = is_cart and not is_dn
+
+        # Cor da linha
+        if is_dn:
+            row_fill = fill(AZUL_CL)
+        elif is_conc:
+            row_fill = fill(ROSA_CL)
+        else:
+            row_fill = fill(BRANCO if di % 2 == 0 else CINZA_CL)
+
+        data_val = drow.get("Data emplacamento")
+        if hasattr(data_val, "strftime"):
+            data_str = data_val.strftime("%d/%m/%Y")
+        else:
+            data_str = str(data_val)[:10] if data_val else "—"
+
+        row_data = [
+            data_str,
+            str(drow.get("CPFCNPJPROPRIETARIO",""))[:20],
+            str(drow.get("NOMEPROPRIETARIO",""))[:45],
+            str(drow.get("Modelo",""))[:30],
+            str(drow.get("Chassi",""))[:20],
+            str(drow.get("Concessionário",""))[:35],
+            str(drow.get("NO_CIDADE",""))[:20],
+        ]
+        for ci, val in enumerate(row_data, 1):
+            cell = ws.cell(row=r, column=ci, value=val)
+            cell.font = Font(name="Arial", size=9, color="FF1A1A1A")
+            cell.fill = row_fill
+            cell.alignment = Alignment(horizontal="left" if ci > 1 else "center", vertical="center")
+            cell.border = borda_fina
+
+    # ════════════════════════════════════
+    # LEGENDA
+    # ════════════════════════════════════
+    leg_row = header_row + len(emp_sorted) + 3
+    ws.row_dimensions[leg_row].height = 16
+    ws.merge_cells(f"A{leg_row}:G{leg_row}")
+    ws[f"A{leg_row}"].value = "LEGENDA:"
+    ws[f"A{leg_row}"].font = Font(name="Arial", bold=True, size=9, color="FF1A1A1A")
+
+    for lci, (texto, cor) in enumerate([
+        ("  ■  Comprou na De Nigris", AZUL_CL),
+        ("  ■  Carteira → Concorrência", ROSA_CL),
+        ("  ■  Sem carteira / Neutro", CINZA_CL),
+    ]):
+        lr = leg_row + 1 + lci
+        ws.row_dimensions[lr].height = 14
+        ws.merge_cells(f"A{lr}:C{lr}")
+        cell = ws[f"A{lr}"]
+        cell.value = texto
+        cell.font = Font(name="Arial", size=9, color="FF1A1A1A")
+        cell.fill = fill(cor)
+        cell.border = borda_fina
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
 # ════════════════════════════════════════════════════════════════
 # SESSION STATE INIT
 # ════════════════════════════════════════════════════════════════
@@ -1387,6 +1705,45 @@ elif pagina == "emplacamentos":
                     <div style="font-size:10px;color:#8a95b0;">📍 {safe_str(row['NO_CIDADE'])} · <span style="color:{cor};font-weight:700;">{int(row['Total'])} caminhões</span></div>
                 </div>
             </div>""", unsafe_allow_html=True)
+
+    # ── Botão de Relatório ──
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="sec-title">📄 Relatório do Período</div>', unsafe_allow_html=True)
+
+    col_btn, col_info = st.columns([2, 3])
+    with col_btn:
+        gerar = st.button(
+            f"📊 Gerar Relatório — {sel_mes_lbl} / {sel_ano}",
+            use_container_width=True,
+            type="primary"
+        )
+    with col_info:
+        st.markdown(
+            f'<div style="padding:8px 12px;background:#f0f8ff;border-radius:10px;font-size:12px;color:#4a5568;">'
+            f'Relatório com cabeçalho resumo, top 3 clientes históricos e lista completa '
+            f'colorida por grupo (De Nigris / Concorrência / Sem carteira).</div>',
+            unsafe_allow_html=True
+        )
+
+    if gerar:
+        if emp_mes.empty:
+            st.warning("Não há emplacamentos no período selecionado.")
+        else:
+            with st.spinner("Gerando relatório..."):
+                nome_cons = sel_cons if sel_cons != "Todos" else "Todos os Consultores"
+                buf_rel = gerar_relatorio_emplacamento(
+                    emp_mes, emp_area, cnpjs_carteira_set, todos_cnpjs_cart,
+                    sel_mes_lbl, sel_ano, nome_cons
+                )
+            fname = f"Relatorio_Emplacamento_{sel_mes_lbl}_{sel_ano}.xlsx"
+            st.download_button(
+                label=f"📥 Baixar {fname}",
+                data=buf_rel,
+                file_name=fname,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+            st.success(f"✅ Relatório gerado com {len(emp_mes)} emplacamentos!")
 
     # Detalhes expandíveis
     st.markdown("<br>", unsafe_allow_html=True)
