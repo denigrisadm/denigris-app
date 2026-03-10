@@ -731,9 +731,9 @@ df_area = st.session_state.df_area
 df_cart = st.session_state.df_cart
 df_emp  = merge_emp(st.session_state.df_emp_list) if st.session_state.df_emp_list else None
 
-PAGINAS_GESTOR  = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacamentos"),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun."),("admin","⚙️","Admin")]
-PAGINAS_GERENTE = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacamentos"),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun.")]
-PAGINAS_VEND    = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacamentos"),("carteira","📋","Carteira"),("oportunidades","🎯","Oportun.")]
+PAGINAS_GESTOR  = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun."),("admin","⚙️","Admin")]
+PAGINAS_GERENTE = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun.")]
+PAGINAS_VEND    = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("oportunidades","🎯","Oportun.")]
 
 if perfil == "gestor": PAGINAS = PAGINAS_GESTOR
 elif perfil == "gerente": PAGINAS = PAGINAS_GERENTE
@@ -756,22 +756,25 @@ if perfil == "vendedor" and df_area is not None:
     if munic_area_top:
         munic_str = " · ".join(m.title() for m in list(munic_area_top)[:2])
         if len(munic_area_top) > 2:
-            munic_str += f" +{len(munic_area_top)-2}"
-        area_info_html = f'<div class="topbar-area">📍 {munic_str}</div>'
+            munic_str += " +" + str(len(munic_area_top)-2)
+        area_info_html = "<div class=\"topbar-area\">📍 " + munic_str + "</div>"
 
-st.markdown(f"""
-<div class="topbar">
-    <div class="topbar-logo">{logo_html_top}</div>
-    <div class="topbar-user">
-        <div class="topbar-info">
-            <div class="topbar-name">👤 Vendedor: {nome}</div>
-            <div class="topbar-role">{perfil_label}</div>
-            {area_info_html}
-        </div>
-        <div class="topbar-avatar">{sigla}</div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+topbar_name_label = "👤 " + nome if perfil == "vendedor" else nome
+
+topbar_html = (
+    "<div class=\"topbar\">"
+    "<div class=\"topbar-logo\">" + logo_html_top + "</div>"
+    "<div class=\"topbar-user\">"
+    "<div class=\"topbar-info\">"
+    "<div class=\"topbar-name\">" + topbar_name_label + "</div>"
+    "<div class=\"topbar-role\">" + perfil_label + "</div>"
+    + area_info_html +
+    "</div>"
+    "<div class=\"topbar-avatar\">" + sigla + "</div>"
+    "</div>"
+    "</div>"
+)
+st.markdown(topbar_html, unsafe_allow_html=True)
 
 # ── BOTTOM NAV ──
 nav_html = '<div class="bottom-nav">'
