@@ -1425,7 +1425,7 @@ elif pagina == "carteira":
         cart_view["MesesSem"] = 999
 
     cart_view["MesesSem"] = pd.to_numeric(cart_view["MesesSem"], errors="coerce").fillna(999).astype(int)
-    inativos_2a = cart_view[cart_view["MesesSem"] > 24]
+    inativos_2a = cart_view[cart_view["MesesSem"] > 48]
     top_compradores = cart_view[cart_view["MesesSem"] <= 24].sort_values("MesesSem")
 
     # KPIs
@@ -1433,16 +1433,16 @@ elif pagina == "carteira":
     st.markdown('</div>', unsafe_allow_html=True)
     k1,k2,k3,k4 = st.columns(4)
     with k1: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Total Carteira</div><div class="kpi-value">{total_cart}</div></div>', unsafe_allow_html=True)
-    with k2: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Inativos +2 anos</div><div class="kpi-value red">{len(inativos_2a)}</div><div class="kpi-sub">Para revisão</div></div>', unsafe_allow_html=True)
-    with k3: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Ativos últimos 2a</div><div class="kpi-value green">{total_cart - len(inativos_2a)}</div></div>', unsafe_allow_html=True)
+    with k2: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Inativos +4 anos</div><div class="kpi-value red">{len(inativos_2a)}</div><div class="kpi-sub">Para revisão</div></div>', unsafe_allow_html=True)
+    with k3: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Ativos últimos 4a</div><div class="kpi-value green">{total_cart - len(inativos_2a)}</div></div>', unsafe_allow_html=True)
     with k4:
         if df_emp is not None:
             total_emp_cart = len(df_emp[df_emp["CNPJ_NORM"].isin(cart_view["CNPJ_NORM"])])
             st.markdown(f'<div class="kpi-card"><div class="kpi-label">Emplacamentos</div><div class="kpi-value blue">{total_emp_cart}</div><div class="kpi-sub">na sua carteira</div></div>', unsafe_allow_html=True)
 
-    # Inativos +2 anos
-    st.markdown('<div class="sec-title">🔴 Clientes para Revisão (inativos +2 anos)</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="alert-red">⚠️ <strong>{len(inativos_2a)} clientes</strong> sem comprar há mais de 2 anos — considere revisar a carteira</div>', unsafe_allow_html=True)
+    # Inativos +4 anos
+    st.markdown('<div class="sec-title">🔴 Clientes para Revisão (inativos +4 anos)</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="alert-red">⚠️ <strong>{len(inativos_2a)} clientes</strong> sem comprar há mais de 4 anos — considere revisar a carteira</div>', unsafe_allow_html=True)
 
     if not inativos_2a.empty:
         cols_in = ["Nome","CPF/CNPJ","VENDEDOR","UltimaCompra","MesesSem","Classificação Mercedes"]
@@ -1455,7 +1455,7 @@ elif pagina == "carteira":
 
         # Exportar sinalizado
         inativos_export = inativos_2a.copy()
-        inativos_export["STATUS"] = "INATIVO +2 ANOS — REVISAR CARTEIRA"
+        inativos_export["STATUS"] = "INATIVO +4 ANOS — REVISAR CARTEIRA"
         buf = BytesIO()
         inativos_export.to_excel(buf, index=False, engine="openpyxl")
         buf.seek(0)
