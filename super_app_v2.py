@@ -491,6 +491,18 @@ def load_area(src):
     df["CEP_ini_norm"]   = df["CEP_Inicial"].apply(norm_cep)
     df["CEP_fim_norm"]   = df["CEP_Final"].apply(norm_cep)
 
+    # ── Cidade_real: cidade que aparece em NO_CIDADE dos emplacamentos ──
+    # Para SP Capital os municípios são bairros — cidade real é "SAO PAULO"
+    # Para Grande SP os municípios já são cidades reais
+    def _cidade_real(row):
+        regiao = norm_str(str(row.get("Regiao", "")))
+        if "SAO PAULO CAPITAL" in regiao or "CAPITAL" in regiao:
+            return "SAO PAULO"
+        # Grande SP ou outros — usar o Município como cidade real
+        return norm_str(str(row.get("Municipio", "")))
+
+    df["Cidade_real"] = df.apply(_cidade_real, axis=1)
+
     return df.reset_index(drop=True)
 
 @st.cache_data(show_spinner=False)
@@ -565,9 +577,11 @@ def merge_emp(dfs):
     return m
 
 def get_consultor(cep_norm, cidade_norm, bairro_norm, df_area):
-    """Retorna consultor por CEP (faixa) ou cidade+bairro como fallback."""
+    """Retorna consultor por CEP (faixa) — critério principal.
+    Fallback por Cidade_real quando não há CEP válido.
+    """
     if df_area is None: return None
-    # 1. CEP
+    # 1. CEP (sempre preferido)
     if cep_norm and len(cep_norm) == 8:
         matches = df_area[
             (df_area["CEP_ini_norm"] != "") &
@@ -576,26 +590,29 @@ def get_consultor(cep_norm, cidade_norm, bairro_norm, df_area):
         ]
         if not matches.empty:
             return matches.iloc[0]["Consultor"]
-    # 2. Cidade + Bairro
-    if bairro_norm:
-        m = df_area[(df_area["Municipio_norm"] == cidade_norm) &
-                    (df_area["Bairro_norm"].str.contains(bairro_norm[:10], na=False))]
-        if not m.empty: return m.iloc[0]["Consultor"]
-    m = df_area[df_area["Municipio_norm"] == cidade_norm]
+    # 2. Cidade real (fallback — usa Cidade_real mapeada se disponível)
+    col_cidade = "Cidade_real" if "Cidade_real" in df_area.columns else "Municipio_norm"
+    m = df_area[df_area[col_cidade] == cidade_norm]
     if not m.empty: return m.iloc[0]["Consultor"]
     return None
 
 def get_munic_area(consultor, df_area):
+    """Retorna (cidades_reais, cep_ranges) para o consultor.
+    Usa Cidade_real (bairros de SP Capital mapeados para 'SAO PAULO').
+    """
     if df_area is None: return [], []
     sub = df_area[df_area["Consultor"] == consultor]
-    municipios = sub["Municipio_norm"].unique().tolist()
+    col_cidade = "Cidade_real" if "Cidade_real" in df_area.columns else "Municipio_norm"
+    cidades = sub[col_cidade].dropna().unique().tolist()
+    cidades = [c for c in cidades if c]
     cep_ranges = sub[sub["CEP_ini_norm"] != ""][["CEP_ini_norm","CEP_fim_norm"]].values.tolist()
-    return municipios, cep_ranges
+    return cidades, cep_ranges
 
-def emp_da_area(df_emp, municipios, cep_ranges):
+def emp_da_area(df_emp, cidades_reais, cep_ranges):
     """Filtra emplacamentos da área.
-    Regra: CEP é o critério principal. Cidade é fallback quando não há CEP válido.
-    Retorna a UNION de ambos os critérios para cobrir o máximo possível.
+    Regra: CEP é o critério principal (sempre preferido).
+    Fallback por cidade real (ex: 'SAO PAULO', 'GUARULHOS') para registros sem CEP válido.
+    cidades_reais já foi mapeado pelo load_area (bairros SP → 'SAO PAULO').
     """
     if df_emp is None or df_emp.empty: return pd.DataFrame()
 
@@ -610,22 +627,12 @@ def emp_da_area(df_emp, municipios, cep_ranges):
                     (df_emp["CEP_norm"] <= fim)
                 )
 
-    # ── 2. Filtro por cidade (fallback e complemento) ──
-    # Normalizar municípios — o campo NO_CIDADE_NORM já está normalizado
-    munic_set = set(m for m in municipios if m)
-    mask_cidade = df_emp["NO_CIDADE_NORM"].isin(munic_set)
-    # Fallback parcial: caso "SAO PAULO" não bata (ex: "SANTANA" é bairro, não cidade)
-    # Nesse caso usar só CEP — não usar cidade parcial pois gera falso positivo
-    # Ex: área "SANTANA" não significa cidade "SANTANA DE PARNAIBA"
-
-    # ── 3. Para clientes SEM CEP cadastrado, usar cidade como fallback ──
+    # ── 2. Filtro por cidade real (fallback para registros sem CEP válido) ──
+    cidade_set = set(c for c in cidades_reais if c)
     sem_cep = df_emp["CEP_norm"].str.len() != 8
-    mask_final = mask_cep | (mask_cidade & sem_cep)
+    mask_cidade = df_emp["NO_CIDADE_NORM"].isin(cidade_set) & sem_cep
 
-    # Se nenhum CEP da área encontrou nada, liberar cidade para todos (arquivo sem CEP)
-    if not mask_cep.any() and munic_set:
-        mask_final = mask_cidade
-
+    mask_final = mask_cep | mask_cidade
     return df_emp[mask_final].copy()
 
 # ════════════════════════════════════════════════════════════════
@@ -1191,7 +1198,8 @@ elif pagina == "emplacamentos":
 
     # Obter área
     if sel_cons == "Todos":
-        munic_area = df_area[df_area["Consultor"] != "ZONA LIVRE"]["Municipio_norm"].unique().tolist()
+        col_c = "Cidade_real" if "Cidade_real" in df_area.columns else "Municipio_norm"
+        munic_area = df_area[df_area["Consultor"] != "ZONA LIVRE"][col_c].dropna().unique().tolist()
         cep_ranges = df_area[df_area["CEP_ini_norm"] != ""][["CEP_ini_norm","CEP_fim_norm"]].values.tolist()
         cnpjs_carteira = df_cart["CNPJ_NORM"].unique() if df_cart is not None else []
         vendedores_area = df_area[df_area["Consultor"] != "ZONA LIVRE"]["Consultor"].unique().tolist()
@@ -1243,18 +1251,13 @@ elif pagina == "emplacamentos":
 
     emp_mes = emp_area[(emp_area["Ano"]==sel_ano) & (emp_area["Mes"]==sel_mes)].copy()
 
-    # ── DIAGNÓSTICO ──
+    # Aviso simples se não há dados no período
     total_emp_geral = len(df_emp[(df_emp["Ano"]==sel_ano) & (df_emp["Mes"]==sel_mes)])
-    if emp_mes.empty and total_emp_geral > 0:
-        with st.expander(f"AVISO: {total_emp_geral} emplacamentos no periodo sem bater com a area", expanded=True):
-            st.markdown(f"**Cidades nos emplacamentos ({sel_mes_lbl}/{sel_ano}):**")
-            cids_emp = df_emp[(df_emp["Ano"]==sel_ano) & (df_emp["Mes"]==sel_mes)]["NO_CIDADE_NORM"].value_counts().head(10)
-            st.dataframe(cids_emp.reset_index().rename(columns={"index":"Cidade","NO_CIDADE_NORM":"Qtd"}), hide_index=True)
-            st.markdown("**Cidades na Área Operacional (amostra):**")
-            st.write(munic_area[:20])
-            st.markdown("**Solução:** Verificar diferenca de grafia entre cidades (ex: SAO PAULO vs SANTANA) ou ampliar faixas de CEP.")
-    elif emp_mes.empty and total_emp_geral == 0:
-        st.info(f"Nao ha emplacamentos registrados em {sel_mes_lbl}/{sel_ano} na base de dados.")
+    if emp_mes.empty:
+        if total_emp_geral == 0:
+            st.info(f"Não há emplacamentos registrados em {sel_mes_lbl}/{sel_ano} na base de dados.")
+        else:
+            st.info(f"Nenhum emplacamento na área/carteira em {sel_mes_lbl}/{sel_ano}.")
 
     # ── 4 QUADRANTES ──
     st.markdown(f'<div class="sec-title">📊 Visão do Período — {sel_mes_lbl} / {sel_ano}</div>', unsafe_allow_html=True)
@@ -1294,9 +1297,8 @@ elif pagina == "emplacamentos":
             </div>
         </div>""", unsafe_allow_html=True)
         if not q1_df.empty:
-            q1_show = q1_df.sort_values("Data emplacamento", ascending=False)[
-                ["NOMEPROPRIETARIO","Modelo","Data emplacamento","Concessionário"]
-            ].copy()
+            _q1_cols = [c for c in ["NOMEPROPRIETARIO","Modelo","Data emplacamento","Concessionário"] if c in q1_df.columns]
+            q1_show = q1_df.sort_values("Data emplacamento", ascending=False)[_q1_cols].copy()
             q1_show = q1_show.rename(columns={"NOMEPROPRIETARIO":"Cliente","Data emplacamento":"Data","Concessionário":"Concessionária"})
             q1_show["Data"] = pd.to_datetime(q1_show["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
             st.dataframe(q1_show.head(10), use_container_width=True, hide_index=True)
@@ -1312,9 +1314,8 @@ elif pagina == "emplacamentos":
             </div>
         </div>""", unsafe_allow_html=True)
         if not q2_df.empty:
-            q2_show = q2_df.sort_values("Data emplacamento", ascending=False)[
-                ["NOMEPROPRIETARIO","Modelo","Data emplacamento","NO_CIDADE","Concessionário"]
-            ].copy()
+            _q2_cols = [c for c in ["NOMEPROPRIETARIO","Modelo","Data emplacamento","NO_CIDADE","Concessionário"] if c in q2_df.columns]
+            q2_show = q2_df.sort_values("Data emplacamento", ascending=False)[_q2_cols].copy()
             q2_show = q2_show.rename(columns={"NOMEPROPRIETARIO":"Cliente","Data emplacamento":"Data","NO_CIDADE":"Cidade","Concessionário":"Concessionária"})
             q2_show["Data"] = pd.to_datetime(q2_show["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
             st.dataframe(q2_show.head(10), use_container_width=True, hide_index=True)
@@ -1331,9 +1332,8 @@ elif pagina == "emplacamentos":
             </div>
         </div>""", unsafe_allow_html=True)
         if not q3_df.empty:
-            q3_show = q3_df.sort_values("Data emplacamento", ascending=False)[
-                ["NOMEPROPRIETARIO","Modelo","Data emplacamento","NO_CIDADE"]
-            ].copy()
+            _q3_cols = [c for c in ["NOMEPROPRIETARIO","Modelo","Data emplacamento","NO_CIDADE"] if c in q3_df.columns]
+            q3_show = q3_df.sort_values("Data emplacamento", ascending=False)[_q3_cols].copy()
             q3_show = q3_show.rename(columns={"NOMEPROPRIETARIO":"Cliente","Data emplacamento":"Data","NO_CIDADE":"Cidade"})
             q3_show["Data"] = pd.to_datetime(q3_show["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
             st.dataframe(q3_show.head(10), use_container_width=True, hide_index=True)
@@ -1366,7 +1366,8 @@ elif pagina == "emplacamentos":
     mostrar_todos = st.toggle("Ver todos os emplacamentos do mês", value=False)
     if mostrar_todos:
         if not emp_mes.empty:
-            det = emp_mes[["NOMEPROPRIETARIO","Placa","Modelo","Marca","Concessionário","NO_CIDADE","Data emplacamento"]].copy()
+            _cols_toggle = [c for c in ["NOMEPROPRIETARIO","Placa","Modelo","Marca","Concessionário","NO_CIDADE","Data emplacamento"] if c in emp_mes.columns]
+            det = emp_mes[_cols_toggle].copy()
             det = det.rename(columns={
                 "NOMEPROPRIETARIO":"Cliente","Concessionário":"Concessionária",
                 "NO_CIDADE":"Cidade","Data emplacamento":"Data"
@@ -1648,7 +1649,8 @@ elif pagina == "gestao":
     # Exports
     ex1,ex2,ex3 = st.columns(3)
     with ex1:
-        buf=BytesIO(); df_g[["Data emplacamento","NOMEPROPRIETARIO","NO_CIDADE","Marca","Modelo","Concessionário"]].to_excel(buf,index=False,engine="openpyxl"); buf.seek(0)
+        _exp_cols = [c for c in ["Data emplacamento","NOMEPROPRIETARIO","NO_CIDADE","Marca","Modelo","Concessionário"] if c in df_g.columns]
+        buf=BytesIO(); df_g[_exp_cols].to_excel(buf,index=False,engine="openpyxl"); buf.seek(0)
         st.download_button("📄 Base Filtrada", buf, file_name="base_filtrada.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     with ex2:
@@ -1712,7 +1714,8 @@ elif pagina == "oportunidades":
             vm = df_cart.set_index("CNPJ_NORM")["VENDEDOR"].to_dict()
             di["Vendedor"] = di["CNPJ_NORM"].map(vm).fillna("—")
         st.markdown(f'<div class="alert-red">🚨 <strong>{len(di)} clientes</strong> há mais de 12 meses sem comprar</div>', unsafe_allow_html=True)
-        di_s = di[["Nome","CNPJ","Cidade","UltimaCompra","Meses","TotalCompras"]].copy()
+        _di_cols = [c for c in ["Nome","CNPJ","Cidade","UltimaCompra","Meses","TotalCompras"] if c in di.columns]
+        di_s = di[_di_cols].copy()
         di_s["UltimaCompra"] = di_s["UltimaCompra"].dt.strftime("%d/%m/%Y")
         di_s = di_s.rename(columns={"UltimaCompra":"Última Compra","Meses":"Meses Sem","TotalCompras":"Total Compras"})
         st.dataframe(di_s, use_container_width=True, hide_index=True)
