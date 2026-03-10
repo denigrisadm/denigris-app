@@ -69,34 +69,61 @@ div[data-testid="stVerticalBlockBorderWrapper"]{padding:0!important;}
   font-size:13px;font-weight:800;color:#0a1628;
 }
 .topbar-info{text-align:right;}
-.topbar-name{font-size:13px;color:#fff;font-weight:700;}
-.topbar-role{font-size:10px;color:#c8a84b;text-transform:uppercase;letter-spacing:1.5px;}
+.topbar-name{font-size:12px;color:#fff;font-weight:700;line-height:1.3;}
+.topbar-role{font-size:9px;color:#c8a84b;text-transform:uppercase;letter-spacing:1.5px;margin-top:1px;}
+.topbar-area{font-size:10px;color:rgba(200,168,75,0.8);margin-top:2px;letter-spacing:0.3px;}
 
-/* ── NAVEGAÇÃO (responsiva) ── */
+/* ── NAVEGAÇÃO — desktop pill buttons ── */
 div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] > div > div > .stButton > button {
-  background:#fff!important;
-  color:#4a5568!important;
-  border:1.5px solid #e0e4ee!important;
+  background:linear-gradient(135deg,#0d1f3c 0%,#1a3355 100%)!important;
+  color:#c8a84b!important;
+  border:1.5px solid rgba(200,168,75,0.3)!important;
   border-radius:14px!important;
   font-weight:700!important;
-  font-size:11px!important;
-  padding:10px 4px!important;
-  box-shadow:0 1px 4px rgba(0,0,0,0.05)!important;
-  transition:all 0.15s!important;
-  min-height:48px!important;
-  letter-spacing:0!important;
+  font-size:12px!important;
+  padding:12px 6px!important;
+  box-shadow:0 4px 15px rgba(10,22,40,0.25),0 1px 4px rgba(0,0,0,0.15)!important;
+  transition:all 0.2s cubic-bezier(.34,1.56,.64,1)!important;
+  min-height:50px!important;
+  letter-spacing:0.2px!important;
+  position:relative!important;
 }
 div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] > div > div > .stButton > button:hover {
-  background:#f0f4ff!important;
+  background:linear-gradient(135deg,#c8a84b 0%,#e8c96b 100%)!important;
   color:#0a1628!important;
-  border-color:#0a1628!important;
-  transform:none!important;
+  border-color:#c8a84b!important;
+  box-shadow:0 8px 25px rgba(200,168,75,0.35),0 2px 8px rgba(0,0,0,0.2)!important;
+  transform:translateY(-3px) scale(1.03)!important;
+}
+div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] > div > div > .stButton > button:active {
+  transform:translateY(-1px) scale(0.98)!important;
+  box-shadow:0 4px 12px rgba(200,168,75,0.25)!important;
 }
 /* botão Sair */
 div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:last-child > div > div > .stButton > button {
-  background:#fff0f0!important;
-  color:#cc3300!important;
-  border-color:#ffcccc!important;
+  background:linear-gradient(135deg,#3a0a0a 0%,#5a1010 100%)!important;
+  color:#ff8870!important;
+  border-color:rgba(255,100,80,0.35)!important;
+  box-shadow:0 4px 15px rgba(80,10,10,0.3)!important;
+}
+div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:last-child > div > div > .stButton > button:hover {
+  background:linear-gradient(135deg,#cc3300 0%,#ee4411 100%)!important;
+  color:#fff!important;
+  border-color:#cc3300!important;
+  box-shadow:0 8px 25px rgba(200,50,0,0.4)!important;
+  transform:translateY(-3px) scale(1.03)!important;
+}
+
+/* NAV WRAPPER — fundo escuro flutuante */
+div[data-testid="stHorizontalBlock"]:has(.stButton){
+  background:linear-gradient(180deg,#f4f6fb 0%,rgba(244,246,251,0.0) 100%)!important;
+  padding:10px 14px 8px 14px!important;
+  border-bottom:1px solid rgba(200,168,75,0.15)!important;
+  position:sticky!important;
+  top:60px!important;
+  z-index:9990!important;
+  backdrop-filter:blur(10px)!important;
+  -webkit-backdrop-filter:blur(10px)!important;
 }
 
 /* ── MOBILE ── */
@@ -106,7 +133,6 @@ div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:last-child > 
   .kpi-grid-3{grid-template-columns:repeat(2,1fr)!important;}
   .kpi-value{font-size:22px!important;}
   .topbar{padding:0 12px!important;}
-  .topbar-info{display:none!important;}
   .hero-name{font-size:15px!important;}
   .hero-stats{flex-wrap:wrap!important;}
   .hero-stat{min-width:80px!important;}
@@ -116,13 +142,6 @@ div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:last-child > 
     padding:8px 2px!important;
     min-height:44px!important;
     border-radius:10px!important;
-  }
-}
-
-@media (min-width: 641px) {
-  div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] > div > div > .stButton > button {
-    font-size:12px!important;
-    padding:12px 8px!important;
   }
 }
 
@@ -388,9 +407,37 @@ def load_users():
     }
 
 def save_users(users):
+    """Salva users.json localmente E no GitHub (persistência entre reboots)."""
     os.makedirs(DATA_DIR, exist_ok=True)
+    content = json.dumps(users, ensure_ascii=False, indent=2)
+    # Salva localmente
     with open(USERS_FILE,"w",encoding="utf-8") as f:
-        json.dump(users, f, ensure_ascii=False, indent=2)
+        f.write(content)
+    # Salva no GitHub para persistir entre reboots
+    try:
+        import urllib.request, urllib.error
+        token = st.secrets.get("GH_TOKEN","") if hasattr(st,"secrets") else ""
+        repo  = st.secrets.get("GH_REPO","") if hasattr(st,"secrets") else ""
+        if token and repo:
+            api_url = f"https://api.github.com/repos/{repo}/contents/data/users.json"
+            # Pega SHA atual do arquivo
+            req_get = urllib.request.Request(api_url, headers={"Authorization":f"token {token}","Accept":"application/vnd.github.v3+json"})
+            try:
+                with urllib.request.urlopen(req_get) as resp:
+                    sha = json.loads(resp.read().decode()).get("sha","")
+            except: sha = ""
+            # Faz o PUT
+            payload = json.dumps({
+                "message":"update users.json",
+                "content": base64.b64encode(content.encode()).decode(),
+                "sha": sha,
+                "branch": st.secrets.get("GH_BRANCH","principal")
+            }).encode()
+            req_put = urllib.request.Request(api_url, data=payload, method="PUT",
+                headers={"Authorization":f"token {token}","Content-Type":"application/json","Accept":"application/vnd.github.v3+json"})
+            with urllib.request.urlopen(req_put): pass
+    except Exception:
+        pass  # falha silenciosa — arquivo local já foi salvo
 
 def registrar_acesso(login):
     users = st.session_state.get("users_db", load_users())
@@ -701,13 +748,25 @@ if pagina not in [p[0] for p in PAGINAS]:
 sigla = nome[0].upper()
 perfil_label = {"gestor":"Administrador","gerente":"Gerente","vendedor":"Consultor"}[perfil]
 logo_html_top = logo_img(30) if LOGO_B64 else '<span style="font-size:14px;font-weight:800;color:#fff;">Comercial De Nigris</span>'
+
+# Info de área para vendedor
+area_info_html = ""
+if perfil == "vendedor" and df_area is not None:
+    munic_area_top, _ = get_munic_area(cons_key, df_area)
+    if munic_area_top:
+        munic_str = " · ".join(m.title() for m in list(munic_area_top)[:2])
+        if len(munic_area_top) > 2:
+            munic_str += f" +{len(munic_area_top)-2}"
+        area_info_html = f'<div class="topbar-area">📍 {munic_str}</div>'
+
 st.markdown(f"""
 <div class="topbar">
     <div class="topbar-logo">{logo_html_top}</div>
     <div class="topbar-user">
         <div class="topbar-info">
-            <div class="topbar-name">{nome}</div>
+            <div class="topbar-name">👤 Vendedor: {nome}</div>
             <div class="topbar-role">{perfil_label}</div>
+            {area_info_html}
         </div>
         <div class="topbar-avatar">{sigla}</div>
     </div>
