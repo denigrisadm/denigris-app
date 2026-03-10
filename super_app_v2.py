@@ -976,10 +976,37 @@ if pagina == "busca":
                         ("Vendedor",      safe_str(cart_row.get("VENDEDOR",""))),
                     ]
 
+                # Montar endereço completo para links de mapa
+                end_completo = " ".join(filter(None, [
+                    endereco if endereco != "—" else "",
+                    cidade_uf.replace(" - —","").replace("—","").strip() if cidade_uf != "—" else "",
+                    cep_exib if cep_exib else ""
+                ])).strip()
+                import urllib.parse as _urlp
+                _addr_enc = _urlp.quote(end_completo)
+                _gmaps_url = f"https://www.google.com/maps/search/?api=1&query={_addr_enc}"
+                _waze_url  = f"https://waze.com/ul?q={_addr_enc}"
+
                 st.markdown('<div class="info-card">', unsafe_allow_html=True)
                 for lbl, val in infos:
                     if val and val != "—":
-                        st.markdown(f'<div class="info-row"><div class="info-label">{lbl}</div><div class="info-value">{val}</div></div>', unsafe_allow_html=True)
+                        if lbl in ("Endereço", "Cidade / UF") and end_completo:
+                            nav_html = (
+                                f'<div style="display:flex;align-items:center;gap:8px;">' +
+                                f'<span>{val}</span>' +
+                                f'<a href="{_gmaps_url}" target="_blank" title="Abrir no Google Maps" ' +
+                                f'style="display:inline-flex;align-items:center;gap:3px;background:#e8f0ff;' +
+                                f'color:#1a73e8;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;' +
+                                f'text-decoration:none;white-space:nowrap;">🗺️ Maps</a>' +
+                                f'<a href="{_waze_url}" target="_blank" title="Abrir no Waze" ' +
+                                f'style="display:inline-flex;align-items:center;gap:3px;background:#f0eaff;' +
+                                f'color:#7c3aed;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;' +
+                                f'text-decoration:none;white-space:nowrap;">🚗 Waze</a>' +
+                                f'</div>'
+                            )
+                            st.markdown(f'<div class="info-row"><div class="info-label">{lbl}</div><div class="info-value">{nav_html}</div></div>', unsafe_allow_html=True)
+                        else:
+                            st.markdown(f'<div class="info-row"><div class="info-label">{lbl}</div><div class="info-value">{val}</div></div>', unsafe_allow_html=True)
                 st.markdown('</div>', unsafe_allow_html=True)
 
             with tab_contatos:
