@@ -1526,10 +1526,26 @@ elif pagina == "oportunidades":
 
     today = pd.Timestamp.now(); ano_a = today.year
     df_opp = df_emp.copy()
+
     if perfil == "vendedor" and df_area is not None:
         munic_m, cep_r_m = get_munic_area(cons_key, df_area)
-        df_opp = emp_da_area(df_emp, munic_m, cep_r_m)
+        # Passo 1: pegar emplacamentos da área geográfica
+        df_opp_area = emp_da_area(df_emp, munic_m, cep_r_m)
+        # Passo 2: adicionar clientes da carteira do vendedor que estão fora da área
+        if df_cart is not None:
+            cnpjs_minha_cart = set(df_cart[df_cart["VENDEDOR"].apply(norm_str) == norm_str(cons_key)]["CNPJ_NORM"].dropna())
+            emp_cart_extra = df_emp[df_emp["CNPJ_NORM"].isin(cnpjs_minha_cart) & ~df_emp.index.isin(df_opp_area.index)]
+            df_opp = pd.concat([df_opp_area, emp_cart_extra], ignore_index=True)
+            # Passo 3: remover clientes da carteira de OUTRO vendedor que não sejam da minha carteira
+            cnpjs_outros = set(df_cart[df_cart["VENDEDOR"].apply(norm_str) != norm_str(cons_key)]["CNPJ_NORM"].dropna())
+            conflito = cnpjs_outros - cnpjs_minha_cart
+            df_opp = df_opp[~df_opp["CNPJ_NORM"].isin(conflito)].copy()
+        else:
+            df_opp = df_opp_area
         st.markdown(f'<div class="alert-blue">📍 Exibindo sua área: <strong>{cons_key.title()}</strong></div>', unsafe_allow_html=True)
+    elif perfil in ("gerente", "gestor"):
+        # Gestor/gerente vê tudo — sem filtro de área
+        df_opp = df_emp.copy()
 
     tab1,tab2,tab3 = st.tabs(["🔴 Inativos +12m","🔥 Próxima Compra","⚠️ Concorrente"])
 
