@@ -832,7 +832,7 @@ def gerar_relatorio_emplacamento(emp_mes, emp_area, cnpjs_carteira_set, todos_cn
     ws["A7"].alignment = aln("left")
     ws["A7"].border = borda_fina
 
-    top3 = emp_area.groupby(["CNPJ_NORM","NOMEPROPRIETARIO","NO_CIDADE"]).agg(
+    top3 = emp_mes.groupby(["CNPJ_NORM","NOMEPROPRIETARIO","NO_CIDADE"]).agg(
         Total=("Chassi","count"),
         Nigris=("Concessionário", lambda x: is_denigris(x).sum())
     ).reset_index().sort_values("Total", ascending=False).head(3).reset_index(drop=True)
@@ -1872,79 +1872,345 @@ elif pagina == "carteira":
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 elif pagina == "painel":
     st.markdown("""<div class="page-header"><h1>📊 Painel Geral</h1>
-    <p>Visão consolidada do mercado</p></div>""", unsafe_allow_html=True)
+    <p>Visão consolidada do mercado — Admin</p></div>""", unsafe_allow_html=True)
+
+    if perfil != "gestor":
+        st.warning("⚠️ Acesso restrito ao administrador.")
+        st.stop()
 
     if df_emp is None:
         st.warning("⚠️ Dados não carregados.")
         st.stop()
 
-    anos_d = sorted([int(a) for a in df_emp["Ano"].dropna().unique()], reverse=True)
-    anos_s = st.multiselect("Anos:", anos_d, default=anos_d)
-    df_p   = df_emp[df_emp["Ano"].isin(anos_s)] if anos_s else df_emp
+    # ── Filtros de período ──
+    hoje_p = pd.Timestamp.now()
+    anos_d = sorted([int(a) for a in df_emp["Ano"].dropna().unique() if int(a) <= hoje_p.year], reverse=True)
 
-    total_p = len(df_p)
+    fp1, fp2, fp3 = st.columns(3)
+    with fp1:
+        sel_ano_p = st.selectbox("Ano:", anos_d, index=0, key="painel_ano")
+    with fp2:
+        meses_ano_p = sorted(df_emp[df_emp["Ano"]==sel_ano_p]["Mes"].dropna().astype(int).unique().tolist())
+        opcoes_mes_p = ["Todos os meses"] + [MESES_PT[m] for m in meses_ano_p]
+        sel_mes_p_lbl = st.selectbox("Mês:", opcoes_mes_p, index=0, key="painel_mes")
+    with fp3:
+        sel_tipo_p = st.selectbox("Tipo:", ["Todos", "Somente Carteira", "Fora da Carteira"], index=0, key="painel_tipo")
+
+    # Filtrar base
+    df_p = df_emp[df_emp["Ano"] == sel_ano_p].copy()
+    if sel_mes_p_lbl != "Todos os meses":
+        sel_mes_p_num = [k for k,v in MESES_PT.items() if v == sel_mes_p_lbl][0]
+        df_p = df_p[df_p["Mes"] == sel_mes_p_num]
+    else:
+        sel_mes_p_num = None
+
+    periodo_label = f"{sel_mes_p_lbl} / {sel_ano_p}" if sel_mes_p_lbl != "Todos os meses" else str(sel_ano_p)
+
+    todos_cnpjs_cart_p = set(df_cart["CNPJ_NORM"].dropna().unique()) if df_cart is not None else set()
+    if sel_tipo_p == "Somente Carteira":
+        df_p = df_p[df_p["CNPJ_NORM"].isin(todos_cnpjs_cart_p)]
+    elif sel_tipo_p == "Fora da Carteira":
+        df_p = df_p[~df_p["CNPJ_NORM"].isin(todos_cnpjs_cart_p)]
+
+    if df_p.empty:
+        st.info(f"Nenhum emplacamento encontrado para {periodo_label}.")
+        st.stop()
+
+    df_p_conc = df_p[~is_denigris(df_p["Concessionário"])]  # só concorrência
+    df_p_nigris = df_p[is_denigris(df_p["Concessionário"])]  # só De Nigris
+
+    total_p    = len(df_p)
+    nigris_p   = len(df_p_nigris)
+    conc_p     = total_p - nigris_p
     clientes_p = df_p["CNPJ_NORM"].nunique()
-    nigris_p   = int(is_denigris(df_p["Concessionário"]).sum())
     ms_p       = round(nigris_p/total_p*100,1) if total_p else 0
+    sem_cart_p = df_p[~df_p["CNPJ_NORM"].isin(todos_cnpjs_cart_p)]["CNPJ_NORM"].nunique()
+    venda_perd = df_p[df_p["CNPJ_NORM"].isin(todos_cnpjs_cart_p) & ~is_denigris(df_p["Concessionário"])]["CNPJ_NORM"].nunique()
 
-    k1,k2,k3,k4 = st.columns(4)
-    with k1: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Total Emplacamentos</div><div class="kpi-value">{total_p:,}</div></div>', unsafe_allow_html=True)
+    # ── KPIs ──
+    st.markdown(f'<div class="sec-title">📈 Resumo do Período — {periodo_label}</div>', unsafe_allow_html=True)
+    k1,k2,k3,k4,k5,k6 = st.columns(6)
+    with k1: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Emplacamentos</div><div class="kpi-value">{total_p:,}</div></div>', unsafe_allow_html=True)
     with k2: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Clientes Únicos</div><div class="kpi-value">{clientes_p:,}</div></div>', unsafe_allow_html=True)
-    with k3: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Vendidos De Nigris</div><div class="kpi-value green">{nigris_p}</div></div>', unsafe_allow_html=True)
-    with k4: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Market Share</div><div class="kpi-value blue">{ms_p}%</div></div>', unsafe_allow_html=True)
+    with k3: st.markdown(f'<div class="kpi-card"><div class="kpi-label">De Nigris</div><div class="kpi-value green">{nigris_p}</div></div>', unsafe_allow_html=True)
+    with k4: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Concorrência</div><div class="kpi-value red">{conc_p}</div></div>', unsafe_allow_html=True)
+    with k5: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Market Share</div><div class="kpi-value blue">{ms_p}%</div></div>', unsafe_allow_html=True)
+    with k6: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Vendas Perdidas</div><div class="kpi-value red">{venda_perd}</div><div class="kpi-sub">carteira→concorrência</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
-    c1,c2 = st.columns(2)
-    with c1:
-        ea = df_p.groupby("Ano").size().reset_index(name="Qtd")
-        fig = go.Figure(go.Scatter(x=ea["Ano"].astype(str), y=ea["Qtd"],
-            mode="lines+markers", line=dict(color="#0a1628",width=3),
-            marker=dict(color="#c8a84b",size=8), fill="tozeroy", fillcolor="rgba(10,22,40,0.07)"))
-        fig.update_layout(plot_bgcolor="#fff",paper_bgcolor="#fff",font_color="#4a5568",
-            height=240, title="Evolução Anual",
-            xaxis=dict(showgrid=False), yaxis=dict(showgrid=True,gridcolor="#f0f2f7"),
-            margin=dict(t=30,b=10,l=10,r=10))
-        st.plotly_chart(fig, use_container_width=True)
-    with c2:
-        tc = df_p["Concessionário"].value_counts().head(8).reset_index()
-        tc = tc.rename(columns={tc.columns[0]:"Conc", tc.columns[1]:"Qtd"})
-        fig2 = go.Figure(go.Pie(labels=tc["Conc"],values=tc["Qtd"],hole=0.45,
-            marker_colors=["#0a1628","#c8a84b","#1a3a6a","#3a6aaa","#6a9acc","#a0c4e8","#d0e8f8","#f0f4fa"]))
-        fig2.update_layout(plot_bgcolor="#fff",paper_bgcolor="#fff",font_color="#4a5568",
-            height=240, title="Concessionárias",
-            margin=dict(t=30,b=10,l=10,r=10),legend=dict(font=dict(color="#4a5568",size=9)))
-        st.plotly_chart(fig2, use_container_width=True)
 
-    c3,c4 = st.columns(2)
-    with c3:
-        em = df_p["Marca"].value_counts().reset_index()
-        em = em.rename(columns={em.columns[0]:"Marca", em.columns[1]:"Qtd"})
-        fig3 = go.Figure(go.Bar(x=em["Qtd"],y=em["Marca"],orientation="h",marker_color="#0a1628"))
-        fig3.update_layout(plot_bgcolor="#fff",paper_bgcolor="#fff",font_color="#4a5568",
-            height=280, title="Por Marca",
-            xaxis=dict(showgrid=True,gridcolor="#f0f2f7"),yaxis=dict(showgrid=False),
-            margin=dict(t=30,b=10,l=10,r=10))
-        st.plotly_chart(fig3, use_container_width=True)
-    with c4:
-        cid = df_p["NO_CIDADE"].value_counts().head(10).reset_index()
-        cid = cid.rename(columns={cid.columns[0]:"Cidade", cid.columns[1]:"Qtd"})
-        fig4 = go.Figure(go.Bar(x=cid["Qtd"],y=cid["Cidade"],orientation="h",marker_color="#c8a84b"))
-        fig4.update_layout(plot_bgcolor="#fff",paper_bgcolor="#fff",font_color="#4a5568",
-            height=280, title="Top Cidades",
-            xaxis=dict(showgrid=True,gridcolor="#f0f2f7"),yaxis=dict(showgrid=False),
-            margin=dict(t=30,b=10,l=10,r=10))
-        st.plotly_chart(fig4, use_container_width=True)
+    # ══════════════════════════════════════════════════════
+    # SEÇÃO 1 — PRINCIPAL CONCORRÊNCIA
+    # ══════════════════════════════════════════════════════
+    st.markdown('<div class="sec-title">🔴 Principal Concorrência — Concessionárias</div>', unsafe_allow_html=True)
 
-    if df_area is not None:
-        st.markdown('<div class="sec-title">👥 Performance por Consultor</div>', unsafe_allow_html=True)
-        mc = df_area.groupby("Municipio_norm")["Consultor"].first().to_dict()
-        df_p2 = df_p.copy(); df_p2["Consultor"] = df_p2["NO_CIDADE_NORM"].map(mc).fillna("Sem consultor").str.title()
-        cp = df_p2.groupby("Consultor").agg(Total=("Chassi","count"),
-            Nigris=("Concessionário", lambda x: is_denigris(x).sum()),
-            Clientes=("CNPJ_NORM","nunique")).reset_index()
-        cp["% Nigris"] = (cp["Nigris"]/cp["Total"]*100).round(1).astype(str)+"%"
-        cp = cp.sort_values("Total",ascending=False)
-        st.dataframe(cp, use_container_width=True, hide_index=True)
+    conc_rank = (
+        df_p_conc.groupby("Concessionário")
+        .agg(Emplacamentos=("Chassi","count"), Clientes=("CNPJ_NORM","nunique"))
+        .reset_index()
+        .sort_values("Emplacamentos", ascending=False)
+    )
+    conc_rank["% do Total"] = (conc_rank["Emplacamentos"] / total_p * 100).round(1).astype(str) + "%"
+
+    if not conc_rank.empty:
+        c_a, c_b = st.columns([3, 2])
+        with c_a:
+            # Gráfico barras horizontais — top 10
+            top10_conc = conc_rank.head(10)
+            # Encurtar nome da concessionária para o gráfico
+            top10_conc = top10_conc.copy()
+            top10_conc["Nome_curto"] = top10_conc["Concessionário"].str[:35]
+            cores_conc = ["#c8a84b" if i == 0 else "#0a1628" for i in range(len(top10_conc))]
+            fig_conc = go.Figure(go.Bar(
+                x=top10_conc["Emplacamentos"],
+                y=top10_conc["Nome_curto"],
+                orientation="h",
+                marker_color=cores_conc,
+                text=top10_conc["Emplacamentos"],
+                textposition="outside"
+            ))
+            fig_conc.update_layout(
+                plot_bgcolor="#fff", paper_bgcolor="#fff", font_color="#4a5568",
+                height=320, title=f"Top Concessionárias Concorrentes — {periodo_label}",
+                xaxis=dict(showgrid=True, gridcolor="#f0f2f7"),
+                yaxis=dict(showgrid=False, autorange="reversed"),
+                margin=dict(t=40,b=10,l=10,r=60)
+            )
+            st.plotly_chart(fig_conc, use_container_width=True)
+        with c_b:
+            # Tabela ranking
+            conc_show = conc_rank.head(10).copy()
+            conc_show.insert(0, "Pos.", range(1, len(conc_show)+1))
+            conc_show["Concessionário"] = conc_show["Concessionário"].str[:40]
+            st.dataframe(conc_show[["Pos.","Concessionário","Emplacamentos","Clientes","% do Total"]],
+                         use_container_width=True, hide_index=True)
+
+        # Destaque — principal concorrente
+        top1 = conc_rank.iloc[0]
+        pct1 = round(top1["Emplacamentos"]/total_p*100, 1) if total_p else 0
+        st.markdown(
+            f'<div class="alert-red">🏆 <strong>Principal concorrente: {top1["Concessionário"][:50]}</strong> — '
+            f'{int(top1["Emplacamentos"])} emplacamentos ({pct1}% do total) com {int(top1["Clientes"])} clientes únicos no período</div>',
+            unsafe_allow_html=True
+        )
+
+    # ══════════════════════════════════════════════════════
+    # SEÇÃO 2 — CLIENTES SEM CARTEIRA QUE MAIS EMPLACARAM
+    # ══════════════════════════════════════════════════════
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="sec-title">⭐ Maiores Clientes Sem Cadastro na Carteira</div>', unsafe_allow_html=True)
+
+    df_sem_cart = df_p[~df_p["CNPJ_NORM"].isin(todos_cnpjs_cart_p)]
+    if not df_sem_cart.empty:
+        top_sem_cart = (
+            df_sem_cart.groupby(["CNPJ_NORM","NOMEPROPRIETARIO","NO_CIDADE"])
+            .agg(
+                Emplacamentos=("Chassi","count"),
+                Nigris=("Concessionário", lambda x: is_denigris(x).sum()),
+                Ultima=("Data emplacamento","max"),
+                MarcaFreq=("Marca", lambda x: x.mode()[0] if not x.empty else "—"),
+            )
+            .reset_index()
+            .sort_values("Emplacamentos", ascending=False)
+            .head(20)
+        )
+        top_sem_cart["% De Nigris"] = (top_sem_cart["Nigris"]/top_sem_cart["Emplacamentos"]*100).round(0).astype(int).astype(str)+"%"
+        top_sem_cart["Ultima"] = pd.to_datetime(top_sem_cart["Ultima"]).dt.strftime("%d/%m/%Y")
+        top_sem_cart.insert(0,"#", range(1, len(top_sem_cart)+1))
+        show_sc = top_sem_cart[["#","NOMEPROPRIETARIO","NO_CIDADE","Emplacamentos","MarcaFreq","% De Nigris","Ultima"]].rename(columns={
+            "NOMEPROPRIETARIO":"Cliente","NO_CIDADE":"Cidade",
+            "MarcaFreq":"Marca Preferida","Ultima":"Última Compra"
+        })
+        st.markdown(
+            f'<div class="alert-blue">💡 <strong>{sem_cart_p} clientes</strong> emplacaram no período sem estar na carteira de nenhum vendedor — potencial de prospecção.</div>',
+            unsafe_allow_html=True
+        )
+        st.dataframe(show_sc, use_container_width=True, hide_index=True)
+    else:
+        st.info("Nenhum cliente fora da carteira no período.")
+
+    # ══════════════════════════════════════════════════════
+    # SEÇÃO 3 — VENDAS PERDIDAS POR VENDEDOR
+    # ══════════════════════════════════════════════════════
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="sec-title">📉 Vendas Perdidas por Vendedor (Carteira → Concorrência)</div>', unsafe_allow_html=True)
+
+    if df_cart is not None and df_area is not None:
+        # Para cada emplacamento de cliente da carteira que foi pra concorrência,
+        # identificar qual vendedor é responsável
+        df_venda_perd = df_p[
+            df_p["CNPJ_NORM"].isin(todos_cnpjs_cart_p) &
+            ~is_denigris(df_p["Concessionário"])
+        ].copy()
+
+        if not df_venda_perd.empty:
+            # Cruzar com carteira para pegar o vendedor responsável
+            cart_vend = df_cart[["CNPJ_NORM","VENDEDOR"]].drop_duplicates(subset=["CNPJ_NORM"])
+            df_venda_perd = df_venda_perd.merge(cart_vend, on="CNPJ_NORM", how="left")
+            df_venda_perd["VENDEDOR"] = df_venda_perd["VENDEDOR"].fillna("Sem Vendedor")
+
+            vp_vend = (
+                df_venda_perd.groupby("VENDEDOR")
+                .agg(
+                    Perdidas=("Chassi","count"),
+                    Clientes_Perdidos=("CNPJ_NORM","nunique"),
+                    Conc_Principal=("Concessionário", lambda x: x.value_counts().index[0] if not x.empty else "—")
+                )
+                .reset_index()
+                .sort_values("Perdidas", ascending=False)
+            )
+
+            # Emplacamentos totais do vendedor no período (via carteira)
+            emp_por_vend = df_p.merge(cart_vend, on="CNPJ_NORM", how="left")
+            emp_por_vend["VENDEDOR"] = emp_por_vend["VENDEDOR"].fillna("Sem Vendedor")
+            total_vend = emp_por_vend.groupby("VENDEDOR")["Chassi"].count().reset_index().rename(columns={"Chassi":"Total_carteira"})
+            nigris_vend = emp_por_vend[is_denigris(emp_por_vend["Concessionário"])].groupby("VENDEDOR")["Chassi"].count().reset_index().rename(columns={"Chassi":"De_Nigris"})
+
+            vp_vend = vp_vend.merge(total_vend, on="VENDEDOR", how="left")
+            vp_vend = vp_vend.merge(nigris_vend, on="VENDEDOR", how="left")
+            vp_vend["De_Nigris"] = vp_vend["De_Nigris"].fillna(0).astype(int)
+            vp_vend["Total_carteira"] = vp_vend["Total_carteira"].fillna(0).astype(int)
+            vp_vend["Taxa Perda"] = (vp_vend["Perdidas"] / vp_vend["Total_carteira"] * 100).round(1).fillna(0).astype(str) + "%"
+            vp_vend["Conc_Principal"] = vp_vend["Conc_Principal"].str[:35]
+
+            # Gráfico
+            cv1, cv2 = st.columns([2, 3])
+            with cv1:
+                fig_vp = go.Figure(go.Bar(
+                    x=vp_vend["Perdidas"],
+                    y=vp_vend["VENDEDOR"].str.title(),
+                    orientation="h",
+                    marker_color="#c0392b",
+                    text=vp_vend["Perdidas"],
+                    textposition="outside"
+                ))
+                fig_vp.update_layout(
+                    plot_bgcolor="#fff", paper_bgcolor="#fff", font_color="#4a5568",
+                    height=max(250, len(vp_vend)*38),
+                    title="Emplacamentos Perdidos por Vendedor",
+                    xaxis=dict(showgrid=True, gridcolor="#f0f2f7"),
+                    yaxis=dict(showgrid=False, autorange="reversed"),
+                    margin=dict(t=40,b=10,l=10,r=60)
+                )
+                st.plotly_chart(fig_vp, use_container_width=True)
+
+            with cv2:
+                vp_show = vp_vend[["VENDEDOR","Perdidas","Clientes_Perdidos","De_Nigris","Total_carteira","Taxa Perda","Conc_Principal"]].copy()
+                vp_show["VENDEDOR"] = vp_show["VENDEDOR"].str.title()
+                vp_show = vp_show.rename(columns={
+                    "VENDEDOR":"Vendedor","Perdidas":"Perdidos",
+                    "Clientes_Perdidos":"Clientes","De_Nigris":"De Nigris",
+                    "Total_carteira":"Total Carteira","Conc_Principal":"Principal Concorrente"
+                })
+                st.dataframe(vp_show, use_container_width=True, hide_index=True)
+
+            # Alert destaque
+            if not vp_vend.empty:
+                top_vend = vp_vend.iloc[0]
+                st.markdown(
+                    f'<div class="alert-red">⚠️ <strong>{str(top_vend["VENDEDOR"]).title()}</strong> teve o maior número de vendas perdidas: '
+                    f'<strong>{int(top_vend["Perdidas"])} emplacamentos</strong> da carteira foram para a concorrência — '
+                    f'principal: {top_vend["Conc_Principal"]}</div>',
+                    unsafe_allow_html=True
+                )
+        else:
+            st.success("✅ Nenhuma venda perdida identificada no período.")
+    else:
+        st.info("Carregue Carteira e Área Operacional para ver análise por vendedor.")
+
+    # ══════════════════════════════════════════════════════
+    # SEÇÃO 4 — VISÃO GERAL POR VENDEDOR
+    # ══════════════════════════════════════════════════════
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="sec-title">👥 Visão Geral por Vendedor</div>', unsafe_allow_html=True)
+
+    if df_cart is not None and df_area is not None:
+        # Mapear emplacamentos → vendedor via carteira + área
+        cart_vend_all = df_cart[["CNPJ_NORM","VENDEDOR"]].drop_duplicates(subset=["CNPJ_NORM"])
+        df_p_vend = df_p.merge(cart_vend_all, on="CNPJ_NORM", how="left")
+
+        # Para não-carteira: mapear por CEP/cidade via área
+        col_c_area = "Cidade_real" if "Cidade_real" in df_area.columns else "Municipio_norm"
+        area_cidade_map = df_area.groupby(col_c_area)["Consultor"].first().to_dict()
+        df_p_vend["VENDEDOR_AREA"] = df_p_vend["NO_CIDADE_NORM"].map(area_cidade_map)
+        df_p_vend["VENDEDOR_FINAL"] = df_p_vend["VENDEDOR"].fillna(df_p_vend["VENDEDOR_AREA"]).fillna("Sem Vendedor")
+
+        resumo_vend = (
+            df_p_vend.groupby("VENDEDOR_FINAL")
+            .agg(
+                Total=("Chassi","count"),
+                De_Nigris=("Concessionário", lambda x: is_denigris(x).sum()),
+                Concorrencia=("Concessionário", lambda x: (~is_denigris(x)).sum()),
+                Clientes=("CNPJ_NORM","nunique"),
+                Em_Carteira=("VENDEDOR", lambda x: x.notna().sum()),
+            )
+            .reset_index()
+            .sort_values("Total", ascending=False)
+        )
+        resumo_vend["Market Share"] = (resumo_vend["De_Nigris"]/resumo_vend["Total"]*100).round(1).astype(str)+"%"
+        resumo_vend["Fora Carteira"] = resumo_vend["Total"] - resumo_vend["Em_Carteira"]
+
+        # Gráfico comparativo empilhado
+        fig_rv = go.Figure()
+        fig_rv.add_trace(go.Bar(
+            name="De Nigris", x=resumo_vend["VENDEDOR_FINAL"].str.title(),
+            y=resumo_vend["De_Nigris"], marker_color="#1E7E34",
+            text=resumo_vend["De_Nigris"], textposition="inside"
+        ))
+        fig_rv.add_trace(go.Bar(
+            name="Concorrência", x=resumo_vend["VENDEDOR_FINAL"].str.title(),
+            y=resumo_vend["Concorrencia"], marker_color="#c0392b",
+            text=resumo_vend["Concorrencia"], textposition="inside"
+        ))
+        fig_rv.update_layout(
+            barmode="stack",
+            plot_bgcolor="#fff", paper_bgcolor="#fff", font_color="#4a5568",
+            height=320, title=f"Emplacamentos por Vendedor — {periodo_label}",
+            xaxis=dict(showgrid=False, tickangle=-30),
+            yaxis=dict(showgrid=True, gridcolor="#f0f2f7"),
+            margin=dict(t=40,b=80,l=10,r=10),
+            legend=dict(orientation="h", y=-0.25)
+        )
+        st.plotly_chart(fig_rv, use_container_width=True)
+
+        # Tabela detalhada
+        resumo_show = resumo_vend.rename(columns={
+            "VENDEDOR_FINAL":"Vendedor","Total":"Total Empl.",
+            "De_Nigris":"De Nigris","Concorrencia":"Concorrência",
+            "Em_Carteira":"Na Carteira","Fora Carteira":"Sem Carteira"
+        })
+        resumo_show["Vendedor"] = resumo_show["Vendedor"].str.title()
+        st.dataframe(
+            resumo_show[["Vendedor","Total Empl.","De Nigris","Concorrência","Clientes","Na Carteira","Sem Carteira","Market Share"]],
+            use_container_width=True, hide_index=True
+        )
+
+    # ══════════════════════════════════════════════════════
+    # SEÇÃO 5 — TODOS OS EMPLACAMENTOS DO PERÍODO
+    # ══════════════════════════════════════════════════════
+    st.markdown("<br>", unsafe_allow_html=True)
+    mostrar_todos_p = st.toggle(f"📋 Ver todos os emplacamentos do período ({len(df_p):,} registros)", value=False)
+    if mostrar_todos_p:
+        _cols_p = [c for c in ["Data emplacamento","CPFCNPJPROPRIETARIO","NOMEPROPRIETARIO","Modelo","Marca",
+                                "Concessionário","NO_CIDADE","SG_ESTADO"] if c in df_p.columns]
+        det_p = df_p[_cols_p].copy()
+        det_p["Data emplacamento"] = pd.to_datetime(det_p["Data emplacamento"], errors="coerce").dt.strftime("%d/%m/%Y")
+        det_p["De Nigris"] = is_denigris(df_p["Concessionário"]).map({True:"✅", False:"—"})
+        det_p["Na Carteira"] = df_p["CNPJ_NORM"].isin(todos_cnpjs_cart_p).map({True:"✅", False:"—"})
+        det_p = det_p.rename(columns={
+            "Data emplacamento":"Data","CPFCNPJPROPRIETARIO":"CNPJ",
+            "NOMEPROPRIETARIO":"Cliente","Concessionário":"Concessionária",
+            "NO_CIDADE":"Cidade","SG_ESTADO":"UF"
+        })
+        st.dataframe(det_p.sort_values("Data"), use_container_width=True, hide_index=True)
+        buf_p = BytesIO()
+        det_p.to_excel(buf_p, index=False, engine="openpyxl")
+        buf_p.seek(0)
+        st.download_button(
+            f"📥 Exportar todos ({len(df_p):,} registros)",
+            buf_p, file_name=f"emplacamentos_admin_{periodo_label.replace('/','_').replace(' ','_')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PÁGINA: GESTÃO & PERFORMANCE
