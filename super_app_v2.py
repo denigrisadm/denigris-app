@@ -2045,9 +2045,12 @@ elif pagina == "painel":
 
         if not df_venda_perd.empty:
             # Cruzar com carteira para pegar o vendedor responsável
-            cart_vend = df_cart[["CNPJ_NORM","VENDEDOR"]].drop_duplicates(subset=["CNPJ_NORM"])
+            # Usar nome distinto para evitar colisão _x/_y com coluna VENDEDOR já existente
+            cart_vend = (df_cart[["CNPJ_NORM","VENDEDOR"]]
+                         .drop_duplicates(subset=["CNPJ_NORM"])
+                         .rename(columns={"VENDEDOR":"_VEND_CART"}))
             df_venda_perd = df_venda_perd.merge(cart_vend, on="CNPJ_NORM", how="left")
-            df_venda_perd["VENDEDOR"] = df_venda_perd["VENDEDOR"].fillna("Sem Vendedor")
+            df_venda_perd["VENDEDOR"] = df_venda_perd["_VEND_CART"].fillna("Sem Vendedor")
 
             vp_vend = (
                 df_venda_perd.groupby("VENDEDOR")
@@ -2062,7 +2065,7 @@ elif pagina == "painel":
 
             # Emplacamentos totais do vendedor no período (via carteira)
             emp_por_vend = df_p.merge(cart_vend, on="CNPJ_NORM", how="left")
-            emp_por_vend["VENDEDOR"] = emp_por_vend["VENDEDOR"].fillna("Sem Vendedor")
+            emp_por_vend["VENDEDOR"] = emp_por_vend["_VEND_CART"].fillna("Sem Vendedor")
             total_vend = emp_por_vend.groupby("VENDEDOR")["Chassi"].count().reset_index().rename(columns={"Chassi":"Total_carteira"})
             nigris_vend = emp_por_vend[is_denigris(emp_por_vend["Concessionário"])].groupby("VENDEDOR")["Chassi"].count().reset_index().rename(columns={"Chassi":"De_Nigris"})
 
@@ -2126,14 +2129,16 @@ elif pagina == "painel":
 
     if df_cart is not None and df_area is not None:
         # Mapear emplacamentos → vendedor via carteira + área
-        cart_vend_all = df_cart[["CNPJ_NORM","VENDEDOR"]].drop_duplicates(subset=["CNPJ_NORM"])
+        cart_vend_all = (df_cart[["CNPJ_NORM","VENDEDOR"]]
+                         .drop_duplicates(subset=["CNPJ_NORM"])
+                         .rename(columns={"VENDEDOR":"_VEND_ALL"}))
         df_p_vend = df_p.merge(cart_vend_all, on="CNPJ_NORM", how="left")
 
         # Para não-carteira: mapear por CEP/cidade via área
         col_c_area = "Cidade_real" if "Cidade_real" in df_area.columns else "Municipio_norm"
         area_cidade_map = df_area.groupby(col_c_area)["Consultor"].first().to_dict()
         df_p_vend["VENDEDOR_AREA"] = df_p_vend["NO_CIDADE_NORM"].map(area_cidade_map)
-        df_p_vend["VENDEDOR_FINAL"] = df_p_vend["VENDEDOR"].fillna(df_p_vend["VENDEDOR_AREA"]).fillna("Sem Vendedor")
+        df_p_vend["VENDEDOR_FINAL"] = df_p_vend["_VEND_ALL"].fillna(df_p_vend["VENDEDOR_AREA"]).fillna("Sem Vendedor")
 
         resumo_vend = (
             df_p_vend.groupby("VENDEDOR_FINAL")
@@ -2142,7 +2147,7 @@ elif pagina == "painel":
                 De_Nigris=("Concessionário", lambda x: is_denigris(x).sum()),
                 Concorrencia=("Concessionário", lambda x: (~is_denigris(x)).sum()),
                 Clientes=("CNPJ_NORM","nunique"),
-                Em_Carteira=("VENDEDOR", lambda x: x.notna().sum()),
+                Em_Carteira=("_VEND_ALL", lambda x: x.notna().sum()),
             )
             .reset_index()
             .sort_values("Total", ascending=False)
