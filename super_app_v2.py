@@ -399,36 +399,45 @@ def registrar_acesso(login):
 def load_area(src):
     if isinstance(src, BytesIO): src.seek(0)
     raw = pd.read_excel(src, header=None)
-    # Detectar linha de header (contém 'Região' ou 'Municipio' ou 'Consultor')
-    header_row = 1
-    for i in range(min(5,len(raw))):
+
+    # Detectar linha de header — procura linha com "VENDEDOR" ou "CONSULTOR" ou "REGIÃO"
+    header_row = 0
+    for i in range(min(5, len(raw))):
         vals = raw.iloc[i].astype(str).str.upper().tolist()
-        if any(k in v for v in vals for k in ["REGI","MUNIC","CONSUL"]):
+        if any(k in v for v in vals for k in ["VENDED","CONSUL","REGI","MUNIC"]):
             header_row = i
             break
+
     if isinstance(src, BytesIO): src.seek(0)
     df = pd.read_excel(src, header=header_row)
-    df.columns = [c.strip() for c in df.columns]
-    # Tentar mapear colunas
+    df.columns = [str(c).strip() for c in df.columns]
+
+    # Mapear colunas pelo nome
     col_map = {}
     for c in df.columns:
         cu = str(c).upper()
-        if "REGI" in cu: col_map[c] = "Regiao"
-        elif "MUNIC" in cu: col_map[c] = "Municipio"
-        elif "BAIRRO" in cu: col_map[c] = "Bairro"
-        elif "CONSUL" in cu: col_map[c] = "Consultor"
-        elif "CEP" in cu and "INIC" in cu: col_map[c] = "CEP_Inicial"
-        elif "CEP" in cu and "FIN" in cu: col_map[c] = "CEP_Final"
-        elif "CEP" in cu: col_map[c] = "CEP_Inicial"
+        if any(k in cu for k in ["VENDED","CONSUL"]): col_map[c] = "Consultor"
+        elif "REGI" in cu:    col_map[c] = "Regiao"
+        elif "MUNIC" in cu:   col_map[c] = "Municipio"
+        elif "BAIRRO" in cu:  col_map[c] = "Bairro"
+        elif "CEP" in cu and ("INIC" in cu or "INÍC" in cu): col_map[c] = "CEP_Inicial"
+        elif "CEP" in cu and ("FIN" in cu or "FINA" in cu):  col_map[c] = "CEP_Final"
     df = df.rename(columns=col_map)
+
+    # Garantir todas as colunas necessárias
     for col in ["Regiao","Municipio","Bairro","Consultor","CEP_Inicial","CEP_Final"]:
         if col not in df.columns: df[col] = ""
-    df["Consultor"]     = df["Consultor"].fillna("ZONA LIVRE").apply(norm_str)
-    df["Municipio_norm"]= df["Municipio"].apply(norm_str)
-    df["Bairro_norm"]   = df["Bairro"].apply(lambda x: norm_str(x) if pd.notna(x) else "")
-    df["CEP_ini_norm"]  = df["CEP_Inicial"].apply(norm_cep)
-    df["CEP_fim_norm"]  = df["CEP_Final"].apply(norm_cep)
-    return df.dropna(subset=["Consultor"]).reset_index(drop=True)
+
+    # Limpar e normalizar
+    df = df[df["Consultor"].astype(str).str.strip().str.upper() != "NAN"].copy()
+    df = df[df["Consultor"].astype(str).str.strip() != ""].copy()
+    df["Consultor"]      = df["Consultor"].fillna("ZONA LIVRE").apply(norm_str)
+    df["Municipio_norm"] = df["Municipio"].apply(norm_str)
+    df["Bairro_norm"]    = df["Bairro"].apply(lambda x: norm_str(x) if pd.notna(x) else "")
+    df["CEP_ini_norm"]   = df["CEP_Inicial"].apply(norm_cep)
+    df["CEP_fim_norm"]   = df["CEP_Final"].apply(norm_cep)
+
+    return df.reset_index(drop=True)
 
 @st.cache_data(show_spinner=False)
 def load_carteira(src):
