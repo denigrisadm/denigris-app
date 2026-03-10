@@ -939,17 +939,28 @@ if pagina == "busca":
                     fone_cart = " · ".join([safe_str(cart_row.get(f,""),"") for f in ["Telefone Residencial","Telefone Comercial","Celular"] if safe_str(cart_row.get(f,""),"") not in ["","—"]])
                     email_cart = safe_str(cart_row.get("E-mail",""))
 
+                # Última compra — data e modelo do emplacamento mais recente
+                ultima_data_raw = esrt["Data emplacamento"].iloc[0] if not esrt.empty else None
+                ultima_data_fmt = pd.to_datetime(ultima_data_raw, errors="coerce")
+                ultima_data_str = ultima_data_fmt.strftime("%d/%m/%Y") if pd.notna(ultima_data_fmt) else "—"
+                ultimo_modelo   = safe_str(esrt["Modelo"].iloc[0]) if not esrt.empty else "—"
+                ultima_conc     = safe_str(esrt["Concessionário"].iloc[0]) if not esrt.empty else "—"
+                foi_nigris      = "✅ Comercial De Nigris" if is_denigris(pd.Series([ultima_conc])).iloc[0] else f"⚠️ {ultima_conc[:40]}"
+
                 infos = [
-                    ("Razão Social",  safe_str(last.get("NOMEPROPRIETARIO",""))),
-                    ("Nome Fantasia", safe_str(last.get("NOME_FANTASIA",""))),
-                    ("CNPJ / CPF",    safe_str(last.get("CPFCNPJPROPRIETARIO",""))),
-                    ("Endereço",      endereco),
-                    ("Cidade / UF",   cidade_uf),
-                    ("CEP",           cep_exib or "—"),
-                    ("Atividade",     safe_atividade(last)),
-                    ("Nat. Jurídica", safe_str(last.get("NATUREZA_JURIDICA",""))),
-                    ("Situação",      safe_str(last.get("SITUACAO_RECEITA",""))),
-                    ("Abertura",      safe_str(last.get("DT_ABERTURA",""))),
+                    ("Razão Social",    safe_str(last.get("NOMEPROPRIETARIO",""))),
+                    ("Nome Fantasia",   safe_str(last.get("NOME_FANTASIA",""))),
+                    ("CNPJ / CPF",      safe_str(last.get("CPFCNPJPROPRIETARIO",""))),
+                    ("📅 Últ. Compra",  ultima_data_str),
+                    ("🚚 Últ. Modelo",  ultimo_modelo),
+                    ("🏢 Últ. Concessionária", foi_nigris),
+                    ("Endereço",        endereco),
+                    ("Cidade / UF",     cidade_uf),
+                    ("CEP",             cep_exib or "—"),
+                    ("Atividade",       safe_atividade(last)),
+                    ("Nat. Jurídica",   safe_str(last.get("NATUREZA_JURIDICA",""))),
+                    ("Situação",        safe_str(last.get("SITUACAO_RECEITA",""))),
+                    ("Abertura",        safe_str(last.get("DT_ABERTURA",""))),
                 ]
                 if cart_row:
                     infos += [
@@ -1115,10 +1126,13 @@ if pagina == "busca":
 
                 # ── Tabela completa ──
                 st.markdown(f'<div class="sec-title">📋 Histórico Completo ({total_h} registros)</div>', unsafe_allow_html=True)
-                det = esrt[["Data emplacamento","Placa","Modelo","Marca","Concessionário","NO_CIDADE"]].copy()
-                det["Data emplacamento"] = det["Data emplacamento"].dt.strftime("%d/%m/%Y")
-                det["De Nigris"] = is_denigris(esrt["Concessionário"]).map({True:"✅","False":"—"})
-                det.columns = ["Data","Placa","Modelo","Marca","Concessionária","Cidade"]
+                # Selecionar só colunas que existem na base
+                cols_hist = [c for c in ["Data emplacamento","Placa","Modelo","Marca","Concessionário","NO_CIDADE"] if c in esrt.columns]
+                det = esrt[cols_hist].copy()
+                det["Data emplacamento"] = pd.to_datetime(det["Data emplacamento"], errors="coerce").dt.strftime("%d/%m/%Y")
+                det["De Nigris"] = is_denigris(esrt["Concessionário"]).apply(lambda x: "✅" if x else "—")
+                rename_map = {"Data emplacamento":"Data","Concessionário":"Concessionária","NO_CIDADE":"Cidade"}
+                det = det.rename(columns={k:v for k,v in rename_map.items() if k in det.columns})
                 st.dataframe(det, use_container_width=True, hide_index=True)
 
     elif buscar and not q:
@@ -1283,8 +1297,8 @@ elif pagina == "emplacamentos":
             q1_show = q1_df.sort_values("Data emplacamento", ascending=False)[
                 ["NOMEPROPRIETARIO","Modelo","Data emplacamento","Concessionário"]
             ].copy()
-            q1_show["Data emplacamento"] = q1_show["Data emplacamento"].dt.strftime("%d/%m/%Y")
-            q1_show.columns = ["Cliente","Modelo","Data","Concessionária"]
+            q1_show = q1_show.rename(columns={"NOMEPROPRIETARIO":"Cliente","Data emplacamento":"Data","Concessionário":"Concessionária"})
+            q1_show["Data"] = pd.to_datetime(q1_show["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
             st.dataframe(q1_show.head(10), use_container_width=True, hide_index=True)
 
     with c2:
@@ -1301,8 +1315,8 @@ elif pagina == "emplacamentos":
             q2_show = q2_df.sort_values("Data emplacamento", ascending=False)[
                 ["NOMEPROPRIETARIO","Modelo","Data emplacamento","NO_CIDADE","Concessionário"]
             ].copy()
-            q2_show["Data emplacamento"] = q2_show["Data emplacamento"].dt.strftime("%d/%m/%Y")
-            q2_show.columns = ["Cliente","Modelo","Data","Cidade","Concessionária"]
+            q2_show = q2_show.rename(columns={"NOMEPROPRIETARIO":"Cliente","Data emplacamento":"Data","NO_CIDADE":"Cidade","Concessionário":"Concessionária"})
+            q2_show["Data"] = pd.to_datetime(q2_show["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
             st.dataframe(q2_show.head(10), use_container_width=True, hide_index=True)
 
     c3, c4 = st.columns(2)
@@ -1320,8 +1334,8 @@ elif pagina == "emplacamentos":
             q3_show = q3_df.sort_values("Data emplacamento", ascending=False)[
                 ["NOMEPROPRIETARIO","Modelo","Data emplacamento","NO_CIDADE"]
             ].copy()
-            q3_show["Data emplacamento"] = q3_show["Data emplacamento"].dt.strftime("%d/%m/%Y")
-            q3_show.columns = ["Cliente","Modelo","Data","Cidade"]
+            q3_show = q3_show.rename(columns={"NOMEPROPRIETARIO":"Cliente","Data emplacamento":"Data","NO_CIDADE":"Cidade"})
+            q3_show["Data"] = pd.to_datetime(q3_show["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
             st.dataframe(q3_show.head(10), use_container_width=True, hide_index=True)
 
     with c4:
@@ -1353,8 +1367,11 @@ elif pagina == "emplacamentos":
     if mostrar_todos:
         if not emp_mes.empty:
             det = emp_mes[["NOMEPROPRIETARIO","Placa","Modelo","Marca","Concessionário","NO_CIDADE","Data emplacamento"]].copy()
-            det["Data emplacamento"] = det["Data emplacamento"].dt.strftime("%d/%m/%Y")
-            det.columns = ["Cliente","Placa","Modelo","Marca","Concessionária","Cidade","Data"]
+            det = det.rename(columns={
+                "NOMEPROPRIETARIO":"Cliente","Concessionário":"Concessionária",
+                "NO_CIDADE":"Cidade","Data emplacamento":"Data"
+            })
+            det["Data"] = pd.to_datetime(det["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
             st.dataframe(det, use_container_width=True, hide_index=True)
             buf = BytesIO(); det.to_excel(buf, index=False, engine="openpyxl"); buf.seek(0)
             st.download_button("📥 Exportar XLSX", buf, file_name=f"emplacamentos_{sel_mes_lbl}_{sel_ano}.xlsx",
@@ -1393,7 +1410,7 @@ elif pagina == "carteira":
     # Cruzar com emplacamentos para saber última compra
     if df_emp is not None:
         ultima_emp = df_emp.groupby("CNPJ_NORM")["Data emplacamento"].max().reset_index()
-        ultima_emp.columns = ["CNPJ_NORM","UltimaCompra"]
+        ultima_emp = ultima_emp.rename(columns={ultima_emp.columns[0]:"CNPJ_NORM", ultima_emp.columns[1]:"UltimaCompra"})
         cart_view = cart_view.merge(ultima_emp, on="CNPJ_NORM", how="left")
         def calc_meses(x):
             try:
@@ -1458,8 +1475,10 @@ elif pagina == "carteira":
         ).reset_index().sort_values("TotalCompras", ascending=False).head(20)
         top_c["% De Nigris"] = (top_c["Nigris"]/top_c["TotalCompras"]*100).round(0).astype(int).astype(str)+"%"
         top_c["UltimaCompra"] = pd.to_datetime(top_c["UltimaCompra"]).dt.strftime("%d/%m/%Y")
-        top_c = top_c.drop(columns=["CNPJ_NORM"])
-        top_c.columns = ["Nome","Cidade","Total","De Nigris","Última Compra","Marca","% De Nigris"]
+        top_c = top_c.drop(columns=["CNPJ_NORM"]).rename(columns={
+            "NOMEPROPRIETARIO":"Nome","NO_CIDADE":"Cidade",
+            "TotalCompras":"Total","Nigris":"De Nigris",
+            "UltimaCompra":"Última Compra","Marca":"Marca"})
         top_c.insert(0,"#",range(1,len(top_c)+1))
         st.dataframe(top_c, use_container_width=True, hide_index=True)
 
@@ -1503,7 +1522,7 @@ elif pagina == "painel":
         st.plotly_chart(fig, use_container_width=True)
     with c2:
         tc = df_p["Concessionário"].value_counts().head(8).reset_index()
-        tc.columns = ["Conc","Qtd"]
+        tc = tc.rename(columns={tc.columns[0]:"Conc", tc.columns[1]:"Qtd"})
         fig2 = go.Figure(go.Pie(labels=tc["Conc"],values=tc["Qtd"],hole=0.45,
             marker_colors=["#0a1628","#c8a84b","#1a3a6a","#3a6aaa","#6a9acc","#a0c4e8","#d0e8f8","#f0f4fa"]))
         fig2.update_layout(plot_bgcolor="#fff",paper_bgcolor="#fff",font_color="#4a5568",
@@ -1513,7 +1532,8 @@ elif pagina == "painel":
 
     c3,c4 = st.columns(2)
     with c3:
-        em = df_p["Marca"].value_counts().reset_index(); em.columns=["Marca","Qtd"]
+        em = df_p["Marca"].value_counts().reset_index()
+        em = em.rename(columns={em.columns[0]:"Marca", em.columns[1]:"Qtd"})
         fig3 = go.Figure(go.Bar(x=em["Qtd"],y=em["Marca"],orientation="h",marker_color="#0a1628"))
         fig3.update_layout(plot_bgcolor="#fff",paper_bgcolor="#fff",font_color="#4a5568",
             height=280, title="Por Marca",
@@ -1521,7 +1541,8 @@ elif pagina == "painel":
             margin=dict(t=30,b=10,l=10,r=10))
         st.plotly_chart(fig3, use_container_width=True)
     with c4:
-        cid = df_p["NO_CIDADE"].value_counts().head(10).reset_index(); cid.columns=["Cidade","Qtd"]
+        cid = df_p["NO_CIDADE"].value_counts().head(10).reset_index()
+        cid = cid.rename(columns={cid.columns[0]:"Cidade", cid.columns[1]:"Qtd"})
         fig4 = go.Figure(go.Bar(x=cid["Qtd"],y=cid["Cidade"],orientation="h",marker_color="#c8a84b"))
         fig4.update_layout(plot_bgcolor="#fff",paper_bgcolor="#fff",font_color="#4a5568",
             height=280, title="Top Cidades",
@@ -1603,7 +1624,7 @@ elif pagina == "gestao":
             margin=dict(t=10,b=10,l=10,r=10))
         st.plotly_chart(fig_c, use_container_width=True)
         perf_e = perf.copy(); perf_e["% Nigris"] = perf_e["% Nigris"]
-        perf_e.columns = ["Consultor","Total","De Nigris","Concorrente","Clientes","% De Nigris"]
+        perf_e = perf_e.rename(columns={"Consultor":"Consultor","Total":"Total","Nigris":"De Nigris","Conc":"Concorrente","Clientes":"Clientes","% Nigris":"% De Nigris"})
         st.dataframe(perf_e, use_container_width=True, hide_index=True)
 
     # Evolução mensal
@@ -1672,7 +1693,7 @@ elif pagina == "oportunidades":
 
     with tab1:
         ul = df_opp.groupby("CNPJ_NORM")["Data emplacamento"].max().reset_index()
-        ul.columns=["CNPJ_NORM","UltimaCompra"]
+        ul = ul.rename(columns={ul.columns[0]:"CNPJ_NORM", ul.columns[1]:"UltimaCompra"})
         tc2 = df_opp.groupby("CNPJ_NORM").size().reset_index(name="TotalCompras")
         inf = df_opp.groupby("CNPJ_NORM").agg(Nome=("NOMEPROPRIETARIO","first"),CNPJ=("CPFCNPJPROPRIETARIO","first"),Cidade=("NO_CIDADE","first")).reset_index()
         di = ul.merge(tc2,on="CNPJ_NORM").merge(inf,on="CNPJ_NORM")
@@ -1693,7 +1714,7 @@ elif pagina == "oportunidades":
         st.markdown(f'<div class="alert-red">🚨 <strong>{len(di)} clientes</strong> há mais de 12 meses sem comprar</div>', unsafe_allow_html=True)
         di_s = di[["Nome","CNPJ","Cidade","UltimaCompra","Meses","TotalCompras"]].copy()
         di_s["UltimaCompra"] = di_s["UltimaCompra"].dt.strftime("%d/%m/%Y")
-        di_s.columns = ["Nome","CNPJ","Cidade","Última Compra","Meses Sem","Total Compras"]
+        di_s = di_s.rename(columns={"UltimaCompra":"Última Compra","Meses":"Meses Sem","TotalCompras":"Total Compras"})
         st.dataframe(di_s, use_container_width=True, hide_index=True)
         buf=BytesIO(); di_s.to_excel(buf,index=False,engine="openpyxl"); buf.seek(0)
         st.download_button("📥 Exportar", buf, file_name="inativos.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
