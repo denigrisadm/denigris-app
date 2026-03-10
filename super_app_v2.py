@@ -590,91 +590,61 @@ df_emp  = merge_emp(st.session_state.df_emp_list) if st.session_state.df_emp_lis
 # ════════════════════════════════════════════════════════════════
 if st.session_state.user is None:
     logo_html = logo_img(52) if LOGO_B64 else '<span style="font-size:24px;font-weight:800;color:#0a1628;">Comercial De Nigris</span>'
-    st.markdown(f"""
+    st.markdown("""
     <style>
-    .login-outer {{
-        min-height: 100vh;
-        background: linear-gradient(160deg, #0a1628 0%, #0d1f3c 60%, #0a1628 100%);
-        display: flex; align-items: center; justify-content: center;
-        padding: 0; margin: 0;
-    }}
-    .login-wrap {{
-        width: 100%; max-width: 400px;
-        margin: 0 auto;
-        padding: 24px 16px;
-    }}
-    .login-card-inner {{
-        background: #fff;
-        border-radius: 24px;
-        padding: 36px 28px 28px 28px;
-        box-shadow: 0 32px 64px rgba(0,0,0,0.35);
-    }}
-    .login-logo-box {{
-        background: #0a1628;
-        border-radius: 16px;
-        padding: 16px 24px;
-        display: inline-block;
-        margin-bottom: 8px;
-    }}
-    .login-sub {{
-        font-size: 11px;
-        color: #8a95b0;
-        text-transform: uppercase;
-        letter-spacing: 2px;
-        display: block;
-        margin-bottom: 28px;
-    }}
-    /* Forçar fundo escuro na página toda durante login */
-    [data-testid="stAppViewContainer"] {{
+    [data-testid="stAppViewContainer"] {
         background: linear-gradient(160deg, #0a1628 0%, #0d1f3c 60%, #0a1628 100%) !important;
         min-height: 100vh;
-    }}
-    [data-testid="stMain"] {{
+    }
+    [data-testid="stMain"], section[data-testid="stMain"] > div {
         background: transparent !important;
-    }}
-    .main .block-container {{
-        padding: 0 !important;
+    }
+    .main .block-container {
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
         max-width: 100% !important;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 100vh;
-    }}
+    }
+    /* Form sem borda */
+    [data-testid="stForm"] {
+        border: none !important;
+        padding: 0 !important;
+        background: transparent !important;
+        box-shadow: none !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-    # Container centralizado
     col_l, col_c, col_r = st.columns([1, 2, 1])
     with col_c:
         st.markdown(f"""
-        <div style="background:#fff;border-radius:24px;padding:36px 28px 12px 28px;
-                    box-shadow:0 32px 64px rgba(0,0,0,0.35);margin-top:40px;">
-            <div style="text-align:center;margin-bottom:24px;">
-                <div style="background:#0a1628;border-radius:16px;padding:14px 20px;
-                            display:inline-block;margin-bottom:10px;">
-                    {logo_html}
-                </div>
-                <div style="font-size:11px;color:#8a95b0;text-transform:uppercase;
-                            letter-spacing:2px;margin-top:4px;">Inteligência Comercial</div>
+        <div style="background:#fff;border-radius:24px;padding:36px 28px 20px 28px;
+                    box-shadow:0 32px 64px rgba(0,0,0,0.35);margin-top:60px;text-align:center;">
+            <div style="background:#0a1628;border-radius:16px;padding:14px 20px;
+                        display:inline-block;margin-bottom:10px;">
+                {logo_html}
             </div>
+            <div style="font-size:11px;color:#8a95b0;text-transform:uppercase;
+                        letter-spacing:2px;margin-top:4px;margin-bottom:4px;">Inteligência Comercial</div>
         </div>
         """, unsafe_allow_html=True)
 
-        usuario_input = st.text_input("", placeholder="👤  Usuário", label_visibility="collapsed", key="login_user")
-        senha_input   = st.text_input("", placeholder="🔒  Senha", type="password", label_visibility="collapsed", key="login_pass")
-        st.markdown("<div style='margin-top:8px;'>", unsafe_allow_html=True)
+        # st.form garante que os valores são capturados corretamente no submit
+        with st.form("form_login", clear_on_submit=False):
+            usuario_input = st.text_input("", placeholder="👤  Usuário", label_visibility="collapsed")
+            senha_input   = st.text_input("", placeholder="🔒  Senha", type="password", label_visibility="collapsed")
+            submitted     = st.form_submit_button("Entrar →", use_container_width=True)
 
-        if st.button("Entrar →", use_container_width=True, key="btn_login"):
+        if submitted:
             key = usuario_input.strip().upper()
-            # Sempre reler users do arquivo para garantir dados frescos
             users_fresh = load_users()
             st.session_state.users_db = users_fresh
-            if key in users_fresh:
+            if not key:
+                st.error("❌ Digite seu usuário")
+            elif key in users_fresh:
                 u = users_fresh[key]
-                senha_digitada = senha_input.strip()
                 senha_ok = (
-                    u.get("senha_hash") == hash_senha(senha_digitada) or
-                    u.get("senha") == senha_digitada
+                    u.get("senha_hash") == hash_senha(senha_input.strip()) or
+                    u.get("senha") == senha_input.strip()
                 )
                 if senha_ok:
                     st.session_state.user = key
@@ -684,7 +654,6 @@ if st.session_state.user is None:
                     st.error("❌ Senha incorreta")
             else:
                 st.error(f"❌ Usuário '{key}' não encontrado")
-        st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
 # ════════════════════════════════════════════════════════════════
@@ -696,18 +665,11 @@ perfil    = u_data.get("perfil", "vendedor")
 nome      = u_data.get("nome", u_key)
 cons_key  = u_data.get("consultor_key", u_key)
 
-# Carregar dados em background — só na primeira vez após login
-if not st.session_state.dados_carregados:
-    with st.spinner("⏳ Carregando dados..."):
-        carregar_dados_se_necessario()
-    # Atualizar variáveis locais após carregamento
-    df_area = st.session_state.df_area
-    df_cart = st.session_state.df_cart
-    df_emp  = merge_emp(st.session_state.df_emp_list) if st.session_state.df_emp_list else None
-else:
-    df_area = st.session_state.df_area
-    df_cart = st.session_state.df_cart
-    df_emp  = merge_emp(st.session_state.df_emp_list) if st.session_state.df_emp_list else None
+# Carregar dados uma única vez — cache do Streamlit garante velocidade nas visitas seguintes
+carregar_dados_se_necessario()
+df_area = st.session_state.df_area
+df_cart = st.session_state.df_cart
+df_emp  = merge_emp(st.session_state.df_emp_list) if st.session_state.df_emp_list else None
 
 PAGINAS_GESTOR  = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacamentos"),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun."),("admin","⚙️","Admin")]
 PAGINAS_GERENTE = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacamentos"),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun.")]
