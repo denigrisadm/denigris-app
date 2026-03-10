@@ -1159,12 +1159,12 @@ elif pagina == "emplacamentos":
             </div>
         </div>""", unsafe_allow_html=True)
         if not q1_df.empty:
-            q1_show = q1_df.groupby(["CNPJ_NORM","NOMEPROPRIETARIO"]).agg(
-                Qtd=("Chassi","count"),
-                Concessionaria=("Concessionário", lambda x: x.mode()[0] if not x.empty else "—")
-            ).reset_index().head(5)
-            st.dataframe(q1_show[["NOMEPROPRIETARIO","Qtd","Concessionaria"]].rename(columns={"NOMEPROPRIETARIO":"Cliente"}),
-                        use_container_width=True, hide_index=True)
+            q1_show = q1_df.sort_values("Data emplacamento", ascending=False)[
+                ["NOMEPROPRIETARIO","Modelo","Data emplacamento","Concessionário"]
+            ].copy()
+            q1_show["Data emplacamento"] = q1_show["Data emplacamento"].dt.strftime("%d/%m/%Y")
+            q1_show.columns = ["Cliente","Modelo","Data","Concessionária"]
+            st.dataframe(q1_show.head(10), use_container_width=True, hide_index=True)
 
     with c2:
         st.markdown(f"""<div class="quadrant">
@@ -1177,12 +1177,12 @@ elif pagina == "emplacamentos":
             </div>
         </div>""", unsafe_allow_html=True)
         if not q2_df.empty:
-            q2_show = q2_df.groupby(["CNPJ_NORM","NOMEPROPRIETARIO","NO_CIDADE"]).agg(
-                Qtd=("Chassi","count"),
-                Conc=("Concessionário", lambda x: x.mode()[0] if not x.empty else "—")
-            ).reset_index().head(5)
-            st.dataframe(q2_show[["NOMEPROPRIETARIO","NO_CIDADE","Qtd"]].rename(columns={"NOMEPROPRIETARIO":"Cliente","NO_CIDADE":"Cidade"}),
-                        use_container_width=True, hide_index=True)
+            q2_show = q2_df.sort_values("Data emplacamento", ascending=False)[
+                ["NOMEPROPRIETARIO","Modelo","Data emplacamento","NO_CIDADE","Concessionário"]
+            ].copy()
+            q2_show["Data emplacamento"] = q2_show["Data emplacamento"].dt.strftime("%d/%m/%Y")
+            q2_show.columns = ["Cliente","Modelo","Data","Cidade","Concessionária"]
+            st.dataframe(q2_show.head(10), use_container_width=True, hide_index=True)
 
     c3, c4 = st.columns(2)
     with c3:
@@ -1196,11 +1196,12 @@ elif pagina == "emplacamentos":
             </div>
         </div>""", unsafe_allow_html=True)
         if not q3_df.empty:
-            q3_show = q3_df.groupby(["CNPJ_NORM","NOMEPROPRIETARIO","NO_CIDADE"]).agg(
-                Qtd=("Chassi","count"),
-            ).reset_index().head(5)
-            st.dataframe(q3_show[["NOMEPROPRIETARIO","NO_CIDADE","Qtd"]].rename(columns={"NOMEPROPRIETARIO":"Cliente","NO_CIDADE":"Cidade"}),
-                        use_container_width=True, hide_index=True)
+            q3_show = q3_df.sort_values("Data emplacamento", ascending=False)[
+                ["NOMEPROPRIETARIO","Modelo","Data emplacamento","NO_CIDADE"]
+            ].copy()
+            q3_show["Data emplacamento"] = q3_show["Data emplacamento"].dt.strftime("%d/%m/%Y")
+            q3_show.columns = ["Cliente","Modelo","Data","Cidade"]
+            st.dataframe(q3_show.head(10), use_container_width=True, hide_index=True)
 
     with c4:
         st.markdown(f"""<div class="quadrant">
