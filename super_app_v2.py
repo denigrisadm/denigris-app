@@ -548,28 +548,42 @@ def emp_da_area(df_emp, municipios, cep_ranges):
 # SESSION STATE INIT
 # ════════════════════════════════════════════════════════════════
 for k, v in [("user",None),("df_area",None),("df_cart",None),
-             ("df_emp_list",[]),("emp_fontes",[]),("pagina","busca"),("users_db",None)]:
+             ("df_emp_list",[]),("emp_fontes",[]),("pagina","busca"),
+             ("users_db",None),("dados_carregados",False)]:
     if k not in st.session_state:
         st.session_state[k] = v
 
+# Usuários: carrega só o JSON pequeno — rápido
 if st.session_state.users_db is None:
     st.session_state.users_db = load_users()
 
-# Carregar dados do GitHub automaticamente
-if st.session_state.df_area is None and os.path.exists(AREA_FILE):
-    st.session_state.df_area = load_area(AREA_FILE)
-if st.session_state.df_cart is None and os.path.exists(CARTEIRA_FILE):
-    st.session_state.df_cart = load_carteira(CARTEIRA_FILE)
-if not st.session_state.df_emp_list and os.path.exists(EMP_FILE):
-    df_def = load_emplacamentos(EMP_FILE, label="default")
-    st.session_state.df_emp_list = [df_def]
-    st.session_state.emp_fontes = ["default"]
+USERS = st.session_state.users_db
+
+# ════════════════════════════════════════════════════════════════
+# DADOS: só carrega APÓS login, com spinner discreto
+# ════════════════════════════════════════════════════════════════
+def carregar_dados_se_necessario():
+    """Carrega os arquivos Excel apenas uma vez, após o login."""
+    if st.session_state.dados_carregados:
+        return
+    carregou = False
+    if st.session_state.df_area is None and os.path.exists(AREA_FILE):
+        st.session_state.df_area = load_area(AREA_FILE)
+        carregou = True
+    if st.session_state.df_cart is None and os.path.exists(CARTEIRA_FILE):
+        st.session_state.df_cart = load_carteira(CARTEIRA_FILE)
+        carregou = True
+    if not st.session_state.df_emp_list and os.path.exists(EMP_FILE):
+        df_def = load_emplacamentos(EMP_FILE, label="default")
+        st.session_state.df_emp_list = [df_def]
+        st.session_state.emp_fontes = ["default"]
+        carregou = True
+    if carregou:
+        st.session_state.dados_carregados = True
 
 df_area = st.session_state.df_area
 df_cart = st.session_state.df_cart
 df_emp  = merge_emp(st.session_state.df_emp_list) if st.session_state.df_emp_list else None
-
-USERS = st.session_state.users_db
 
 # ════════════════════════════════════════════════════════════════
 # LOGIN
@@ -674,13 +688,26 @@ if st.session_state.user is None:
     st.stop()
 
 # ════════════════════════════════════════════════════════════════
-# USUÁRIO LOGADO
+# USUÁRIO LOGADO — carregar dados agora (uma única vez, com cache)
 # ════════════════════════════════════════════════════════════════
 u_key     = st.session_state.user
 u_data    = USERS.get(u_key, {})
 perfil    = u_data.get("perfil", "vendedor")
 nome      = u_data.get("nome", u_key)
 cons_key  = u_data.get("consultor_key", u_key)
+
+# Carregar dados em background — só na primeira vez após login
+if not st.session_state.dados_carregados:
+    with st.spinner("⏳ Carregando dados..."):
+        carregar_dados_se_necessario()
+    # Atualizar variáveis locais após carregamento
+    df_area = st.session_state.df_area
+    df_cart = st.session_state.df_cart
+    df_emp  = merge_emp(st.session_state.df_emp_list) if st.session_state.df_emp_list else None
+else:
+    df_area = st.session_state.df_area
+    df_cart = st.session_state.df_cart
+    df_emp  = merge_emp(st.session_state.df_emp_list) if st.session_state.df_emp_list else None
 
 PAGINAS_GESTOR  = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacamentos"),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun."),("admin","⚙️","Admin")]
 PAGINAS_GERENTE = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacamentos"),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun.")]
@@ -1182,7 +1209,7 @@ elif pagina == "emplacamentos":
             </div>""", unsafe_allow_html=True)
 
     # Detalhes expandíveis
-    with st.expander("📋 Ver todos os emplacamentos do mês"):
+    with st.expander("📋 Ver todos os emplacamentos do mês", expanded=False):
         if not emp_mes.empty:
             det = emp_mes[["NOMEPROPRIETARIO","Placa","Modelo","Marca","Concessionário","NO_CIDADE"]].copy()
             det.columns = ["Cliente","Placa","Modelo","Marca","Concessionária","Cidade"]
@@ -1213,7 +1240,11 @@ elif pagina == "carteira":
         cart_view = df_cart.copy() if sel_vend == "Todos" else df_cart[df_cart["VENDEDOR"] == sel_vend].copy()
     else:
         # vendedor vê sua carteira pelo nome
-        cart_view = df_cart[df_cart["VENDEDOR"].str.upper() == cons_key.upper()].copy()
+        # Normalizar dos dois lados para garantir match (remove acentos, espaços duplos)
+        cart_view = df_cart[df_cart["VENDEDOR"].apply(norm_str) == norm_str(cons_key)].copy()
+        # Fallback: tentar match simples se normalizado não achou
+        if cart_view.empty:
+            cart_view = df_cart[df_cart["VENDEDOR"].str.upper().str.strip() == cons_key.upper().strip()].copy()
 
     total_cart = len(cart_view)
 
@@ -1570,14 +1601,16 @@ elif pagina == "admin":
 
         st.markdown('<div class="sec-title">➕ Criar / Editar Usuário</div>', unsafe_allow_html=True)
 
-        # Obter lista de consultores das planilhas
+        # Obter lista de consultores das planilhas (normalizados para comparação)
         consultores_area = []
         if df_area is not None:
-            consultores_area = sorted([c for c in df_area["Consultor"].unique() if c != "ZONA LIVRE"])
-        vendedores_cart = []
+            consultores_area = sorted([c for c in df_area["Consultor"].unique() if c not in ("ZONA LIVRE", "")])
+        vendedores_cart_raw = []
         if df_cart is not None:
-            vendedores_cart = sorted(df_cart["VENDEDOR"].dropna().unique().tolist())
-        # União das duas listas
+            vendedores_cart_raw = df_cart["VENDEDOR"].dropna().unique().tolist()
+        # Normalizar vendedores da carteira para bater com área operacional
+        vendedores_cart = sorted([norm_str(v) for v in vendedores_cart_raw if str(v).strip()])
+        # União das duas listas (sem duplicatas)
         todos_consultores = sorted(set(consultores_area + vendedores_cart))
 
         st.markdown("""
@@ -1605,9 +1638,10 @@ elif pagina == "admin":
                     )
                     new_cons_key = "" if sel_cons_idx == "— Selecione —" else sel_cons_idx
                     if new_cons_key:
-                        # Verificar se existe na área e na carteira
-                        na_area  = new_cons_key in consultores_area
-                        na_cart  = new_cons_key in vendedores_cart
+                        # Verificar se existe na área e na carteira (comparação normalizada)
+                        key_norm = norm_str(new_cons_key)
+                        na_area  = key_norm in consultores_area
+                        na_cart  = key_norm in vendedores_cart
                         col_v1, col_v2 = st.columns(2)
                         with col_v1:
                             st.markdown(f'<div style="font-size:12px;padding:6px 10px;border-radius:8px;background:{"#e8f8ee" if na_area else "#fff4e0"};color:{"#007030" if na_area else "#a05000"};">{"✅" if na_area else "⚠️"} Área Operacional</div>', unsafe_allow_html=True)
@@ -1647,7 +1681,7 @@ elif pagina == "admin":
                     "senha_hash": hash_senha(new_senha),
                     "perfil": new_perfil,
                     "nome": new_nome,
-                    "consultor_key": new_cons_key.upper() if new_cons_key else new_login,
+                    "consultor_key": norm_str(new_cons_key) if new_cons_key else norm_str(new_login),
                     "ultimo_acesso": USERS.get(new_login, {}).get("ultimo_acesso")
                 }
                 save_users(USERS)
