@@ -1227,10 +1227,13 @@ elif pagina == "emplacamentos":
             </div>""", unsafe_allow_html=True)
 
     # Detalhes expandíveis
-    with st.expander("Ver todos os emplacamentos do mes", expanded=False):
+    st.markdown("<br>", unsafe_allow_html=True)
+    mostrar_todos = st.toggle("Ver todos os emplacamentos do mês", value=False)
+    if mostrar_todos:
         if not emp_mes.empty:
-            det = emp_mes[["NOMEPROPRIETARIO","Placa","Modelo","Marca","Concessionário","NO_CIDADE"]].copy()
-            det.columns = ["Cliente","Placa","Modelo","Marca","Concessionária","Cidade"]
+            det = emp_mes[["NOMEPROPRIETARIO","Placa","Modelo","Marca","Concessionário","NO_CIDADE","Data emplacamento"]].copy()
+            det["Data emplacamento"] = det["Data emplacamento"].dt.strftime("%d/%m/%Y")
+            det.columns = ["Cliente","Placa","Modelo","Marca","Concessionária","Cidade","Data"]
             st.dataframe(det, use_container_width=True, hide_index=True)
             buf = BytesIO(); det.to_excel(buf, index=False, engine="openpyxl"); buf.seek(0)
             st.download_button("📥 Exportar XLSX", buf, file_name=f"emplacamentos_{sel_mes_lbl}_{sel_ano}.xlsx",
