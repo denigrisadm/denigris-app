@@ -522,34 +522,40 @@ def get_munic_area(consultor, df_area):
     return municipios, cep_ranges
 
 def emp_da_area(df_emp, municipios, cep_ranges):
+    """Filtra emplacamentos da área.
+    Regra: CEP é o critério principal. Cidade é fallback quando não há CEP válido.
+    Retorna a UNION de ambos os critérios para cobrir o máximo possível.
+    """
     if df_emp is None or df_emp.empty: return pd.DataFrame()
-    # Normalizar municipios para comparação sem acento/espaço
-    munic_set = set(municipios)
-    # Também tentar sem espaços e abreviações comuns
-    munic_set_alt = set()
-    for m in municipios:
-        munic_set_alt.add(m.replace(" ",""))
-        munic_set_alt.add(re.sub(r'\bSAO\b','SAO',m))
-        munic_set_alt.add(re.sub(r'\bSTO\b','SANTO',m))
 
-    mask_cidade = df_emp["NO_CIDADE_NORM"].isin(munic_set)
-    # fallback: comparação parcial para casos como "SAO PAULO" vs "SÃO PAULO" (já normalizados)
-    if not mask_cidade.any() and municipios:
-        mask_cidade = df_emp["NO_CIDADE_NORM"].apply(
-            lambda c: any(c in m or m in c for m in munic_set) if c else False
-        )
-
+    # ── 1. Filtro por CEP (faixas da área operacional) ──
+    mask_cep = pd.Series(False, index=df_emp.index)
     if cep_ranges:
-        mask_cep = pd.Series(False, index=df_emp.index)
         for ini, fim in cep_ranges:
             if ini and fim:
                 mask_cep |= (
-                    (df_emp["CEP_norm"] != "") &
+                    (df_emp["CEP_norm"].str.len() == 8) &
                     (df_emp["CEP_norm"] >= ini) &
                     (df_emp["CEP_norm"] <= fim)
                 )
-        return df_emp[mask_cidade | mask_cep].copy()
-    return df_emp[mask_cidade].copy()
+
+    # ── 2. Filtro por cidade (fallback e complemento) ──
+    # Normalizar municípios — o campo NO_CIDADE_NORM já está normalizado
+    munic_set = set(m for m in municipios if m)
+    mask_cidade = df_emp["NO_CIDADE_NORM"].isin(munic_set)
+    # Fallback parcial: caso "SAO PAULO" não bata (ex: "SANTANA" é bairro, não cidade)
+    # Nesse caso usar só CEP — não usar cidade parcial pois gera falso positivo
+    # Ex: área "SANTANA" não significa cidade "SANTANA DE PARNAIBA"
+
+    # ── 3. Para clientes SEM CEP cadastrado, usar cidade como fallback ──
+    sem_cep = df_emp["CEP_norm"].str.len() != 8
+    mask_final = mask_cep | (mask_cidade & sem_cep)
+
+    # Se nenhum CEP da área encontrou nada, liberar cidade para todos (arquivo sem CEP)
+    if not mask_cep.any() and munic_set:
+        mask_final = mask_cidade
+
+    return df_emp[mask_final].copy()
 
 # ════════════════════════════════════════════════════════════════
 # SESSION STATE INIT
@@ -1066,10 +1072,43 @@ elif pagina == "emplacamentos":
             cnpjs_carteira = []
         vendedores_area = [sel_cons]
 
-    emp_area = emp_da_area(df_emp, munic_area, cep_ranges)
-    emp_mes  = emp_area[(emp_area["Ano"]==sel_ano) & (emp_area["Mes"]==sel_mes)].copy()
+    # ── CNPJ de TODOS os vendedores (para filtrar conflitos de carteira) ──
+    if df_cart is not None:
+        todos_cnpjs_cart = set(df_cart["CNPJ_NORM"].dropna().unique())
+        # CNPJ que estão na carteira de OUTRO vendedor (não do consultado)
+        cnpjs_outros = set(
+            df_cart[df_cart["VENDEDOR"].apply(norm_str) != norm_str(sel_cons)]["CNPJ_NORM"].dropna().unique()
+        ) if sel_cons != "Todos" else set()
+    else:
+        todos_cnpjs_cart = set()
+        cnpjs_outros = set()
 
-    # ── DIAGNÓSTICO (visível quando zerado) ──
+    cnpjs_carteira_set = set(cnpjs_carteira)
+
+    # ── ÁREA: CEP primeiro, cidade como fallback ──
+    # emp_da_area já faz: tenta CEP, fallback cidade
+    emp_area_total = emp_da_area(df_emp, munic_area, cep_ranges)
+
+    # ── Para vendedor específico: adicionar também clientes DA SUA CARTEIRA
+    # que emplacaram fora da área (mas são dele pela carteira)
+    if sel_cons != "Todos" and len(cnpjs_carteira_set) > 0:
+        emp_cart_extra = df_emp[
+            df_emp["CNPJ_NORM"].isin(cnpjs_carteira_set) &
+            ~df_emp.index.isin(emp_area_total.index)
+        ]
+        emp_area = pd.concat([emp_area_total, emp_cart_extra], ignore_index=True)
+    else:
+        emp_area = emp_area_total
+
+    # Remover clientes que estão na carteira de OUTRO vendedor
+    # (exceto se estiverem na carteira DO vendedor consultado)
+    if sel_cons != "Todos":
+        conflito = cnpjs_outros - cnpjs_carteira_set
+        emp_area = emp_area[~emp_area["CNPJ_NORM"].isin(conflito)].copy()
+
+    emp_mes = emp_area[(emp_area["Ano"]==sel_ano) & (emp_area["Mes"]==sel_mes)].copy()
+
+    # ── DIAGNÓSTICO ──
     total_emp_geral = len(df_emp[(df_emp["Ano"]==sel_ano) & (df_emp["Mes"]==sel_mes)])
     if emp_mes.empty and total_emp_geral > 0:
         with st.expander(f"AVISO: {total_emp_geral} emplacamentos no periodo sem bater com a area", expanded=True):
@@ -1078,30 +1117,30 @@ elif pagina == "emplacamentos":
             st.dataframe(cids_emp.reset_index().rename(columns={"index":"Cidade","NO_CIDADE_NORM":"Qtd"}), hide_index=True)
             st.markdown("**Cidades na Área Operacional (amostra):**")
             st.write(munic_area[:20])
-            st.markdown("**💡 Solução:** Os nomes das cidades nos emplacamentos precisam bater com os da Área Operacional. Verifique se há diferenças de grafia (ex: 'SAO PAULO' vs 'SÃO PAULO').")
+            st.markdown("**Solução:** Verificar diferenca de grafia entre cidades (ex: SAO PAULO vs SANTANA) ou ampliar faixas de CEP.")
     elif emp_mes.empty and total_emp_geral == 0:
-        st.info(f"ℹ️ Não há emplacamentos registrados em {sel_mes_lbl}/{sel_ano} na base de dados.")
+        st.info(f"Nao ha emplacamentos registrados em {sel_mes_lbl}/{sel_ano} na base de dados.")
 
     # ── 4 QUADRANTES ──
     st.markdown(f'<div class="sec-title">📊 Visão do Período — {sel_mes_lbl} / {sel_ano}</div>', unsafe_allow_html=True)
 
-    # Q1: Carteira que comprou na concorrência (no mês)
-    if len(cnpjs_carteira) > 0:
-        emp_mes_conc = emp_mes[~is_denigris(emp_mes["Concessionário"])].copy()
-        q1_df = emp_mes_conc[emp_mes_conc["CNPJ_NORM"].isin(cnpjs_carteira)]
+    # Q1: Clientes da CARTEIRA que compraram na concorrência no mês
+    if len(cnpjs_carteira_set) > 0:
+        q1_df = emp_mes[
+            emp_mes["CNPJ_NORM"].isin(cnpjs_carteira_set) &
+            ~is_denigris(emp_mes["Concessionário"])
+        ].copy()
     else:
         q1_df = pd.DataFrame()
 
-    # Q2: Área sem cadastro na carteira (no mês)
-    if len(cnpjs_carteira) > 0:
-        q2_df = emp_mes[~emp_mes["CNPJ_NORM"].isin(cnpjs_carteira)].copy()
-    else:
-        q2_df = emp_mes.copy()
+    # Q2: Emplacamentos na área de clientes SEM carteira
+    # (não estão na carteira de nenhum vendedor → oportunidade real)
+    q2_df = emp_mes[~emp_mes["CNPJ_NORM"].isin(todos_cnpjs_cart)].copy()
 
-    # Q3: Compraram na Comercial De Nigris (no mês)
+    # Q3: Compraram na Comercial De Nigris (no mês, área + carteira)
     q3_df = emp_mes[is_denigris(emp_mes["Concessionário"])].copy()
 
-    # Q4: Top 3 (histórico)
+    # Q4: Top 3 histórico (área + carteira, todos os anos)
     top_hist = emp_area.groupby(["CNPJ_NORM","NOMEPROPRIETARIO","NO_CIDADE"]).agg(
         Total=("Chassi","count"),
         Nigris=("Concessionário", lambda x: is_denigris(x).sum()),
