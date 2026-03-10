@@ -1563,16 +1563,19 @@ elif pagina == "admin":
 
         st.markdown('<div class="sec-title">➕ Criar / Editar Usuário</div>', unsafe_allow_html=True)
 
-        # Obter lista de consultores das planilhas (normalizados para comparação)
+        # Obter lista de consultores — tudo normalizado para comparação consistente
         consultores_area = []
         if df_area is not None:
-            consultores_area = sorted([c for c in df_area["Consultor"].unique() if c not in ("ZONA LIVRE", "")])
-        vendedores_cart_raw = []
+            consultores_area = sorted([
+                norm_str(c) for c in df_area["Consultor"].unique()
+                if norm_str(c) not in ("ZONA LIVRE", "")
+            ])
+        vendedores_cart = []
         if df_cart is not None:
-            vendedores_cart_raw = df_cart["VENDEDOR"].dropna().unique().tolist()
-        # Normalizar vendedores da carteira para bater com área operacional
-        vendedores_cart = sorted([norm_str(v) for v in vendedores_cart_raw if str(v).strip()])
-        # União das duas listas (sem duplicatas)
+            vendedores_cart = sorted([
+                norm_str(v) for v in df_cart["VENDEDOR"].dropna().unique()
+                if str(v).strip()
+            ])
         todos_consultores = sorted(set(consultores_area + vendedores_cart))
 
         st.markdown("""
@@ -1600,10 +1603,12 @@ elif pagina == "admin":
                     )
                     new_cons_key = "" if sel_cons_idx == "— Selecione —" else sel_cons_idx
                     if new_cons_key:
-                        # Verificar se existe na área e na carteira (comparação normalizada)
+                        # Dropdown já mostra nomes normalizados — comparação direta
                         key_norm = norm_str(new_cons_key)
                         na_area  = key_norm in consultores_area
                         na_cart  = key_norm in vendedores_cart
+                        # Debug silencioso — remover após confirmar
+                        _ = (key_norm, consultores_area[:3])
                         col_v1, col_v2 = st.columns(2)
                         with col_v1:
                             st.markdown(f'<div style="font-size:12px;padding:6px 10px;border-radius:8px;background:{"#e8f8ee" if na_area else "#fff4e0"};color:{"#007030" if na_area else "#a05000"};">{"✅" if na_area else "⚠️"} Área Operacional</div>', unsafe_allow_html=True)
