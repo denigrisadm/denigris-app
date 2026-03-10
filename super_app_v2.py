@@ -1017,13 +1017,18 @@ elif pagina == "emplacamentos":
     else:
         sel_cons = cons_key
 
-    # Filtro de mês
-    # Último mês/ano com dados reais (não necessariamente o mês atual)
-    ultimo_registro = df_emp.dropna(subset=["Data emplacamento"])["Data emplacamento"].max()
-    ano_default  = int(ultimo_registro.year)  if pd.notna(ultimo_registro) else today.year
-    mes_default  = int(ultimo_registro.month) if pd.notna(ultimo_registro) else today.month
+    # Filtro de mês — usa o último mês com dados reais, ignorando datas futuras
+    hoje = pd.Timestamp.now()
+    datas_validas = df_emp.dropna(subset=["Data emplacamento"])
+    datas_validas = datas_validas[datas_validas["Data emplacamento"] <= hoje]
+    ultimo_registro = datas_validas["Data emplacamento"].max() if not datas_validas.empty else hoje
+    ano_default = int(ultimo_registro.year)
+    mes_default = int(ultimo_registro.month)
 
-    anos_disp = sorted(df_emp["Ano"].unique(), reverse=True)
+    anos_disp = sorted([a for a in df_emp["Ano"].unique() if a <= hoje.year], reverse=True)
+    if not anos_disp:
+        anos_disp = sorted(df_emp["Ano"].unique(), reverse=True)
+
     fc1, fc2 = st.columns(2)
     with fc1:
         idx_ano = anos_disp.index(ano_default) if ano_default in anos_disp else 0
@@ -1045,7 +1050,11 @@ elif pagina == "emplacamentos":
     else:
         munic_area, cep_ranges = get_munic_area(sel_cons, df_area)
         if df_cart is not None:
-            cnpjs_carteira = df_cart[df_cart["VENDEDOR"].str.upper() == sel_cons.upper()]["CNPJ_NORM"].unique()
+            # Normalizar dos dois lados para garantir match
+            sel_cons_norm = norm_str(sel_cons)
+            cnpjs_carteira = df_cart[
+                df_cart["VENDEDOR"].apply(norm_str) == sel_cons_norm
+            ]["CNPJ_NORM"].unique()
         else:
             cnpjs_carteira = []
         vendedores_area = [sel_cons]
@@ -1056,7 +1065,7 @@ elif pagina == "emplacamentos":
     # ── DIAGNÓSTICO (visível quando zerado) ──
     total_emp_geral = len(df_emp[(df_emp["Ano"]==sel_ano) & (df_emp["Mes"]==sel_mes)])
     if emp_mes.empty and total_emp_geral > 0:
-        with st.expander(f"⚠️ {total_emp_geral} emplacamentos encontrados no período mas nenhum bateu com a área — clique para diagnosticar", expanded=True):
+        with st.expander(f"AVISO: {total_emp_geral} emplacamentos no periodo sem bater com a area", expanded=True):
             st.markdown(f"**Cidades nos emplacamentos ({sel_mes_lbl}/{sel_ano}):**")
             cids_emp = df_emp[(df_emp["Ano"]==sel_ano) & (df_emp["Mes"]==sel_mes)]["NO_CIDADE_NORM"].value_counts().head(10)
             st.dataframe(cids_emp.reset_index().rename(columns={"index":"Cidade","NO_CIDADE_NORM":"Qtd"}), hide_index=True)
@@ -1171,7 +1180,7 @@ elif pagina == "emplacamentos":
             </div>""", unsafe_allow_html=True)
 
     # Detalhes expandíveis
-    with st.expander("📋 Ver todos os emplacamentos do mês", expanded=False):
+    with st.expander("Ver todos os emplacamentos do mes", expanded=False):
         if not emp_mes.empty:
             det = emp_mes[["NOMEPROPRIETARIO","Placa","Modelo","Marca","Concessionário","NO_CIDADE"]].copy()
             det.columns = ["Cliente","Placa","Modelo","Marca","Concessionária","Cidade"]
