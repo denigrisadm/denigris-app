@@ -23,7 +23,7 @@ LOGO_B64 = "/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX1BST0ZJTEUAAQEAAAHIAAAAAAQwAABt
 DATA_DIR      = "data"
 AREA_FILE     = os.path.join(DATA_DIR, "AREA_OPERACIONAL.xlsx")
 CARTEIRA_FILE = os.path.join(DATA_DIR, "CARTEIRA.xlsx")
-EMP_FILE      = os.path.join(DATA_DIR, "EMPLACAMENTOS.xlsx")
+EMP_FILE      = os.path.join(DATA_DIR, "EMPLACAMENTOS.xlsx")  # base completa 2021-
 USERS_FILE    = os.path.join(DATA_DIR, "users.json")
 
 # ── IDENTIDADE ──
@@ -508,30 +508,54 @@ def load_carteira(src):
 @st.cache_data(show_spinner=False)
 def load_emplacamentos(src, label=""):
     if isinstance(src, BytesIO): src.seek(0)
-    raw = pd.read_excel(src, header=None)
-    header_row = 5
-    for i in range(15):
+    # Detectar linha do header (procura "Chassi" nas primeiras 15 linhas; default=0)
+    raw = pd.read_excel(src, header=None, nrows=15)
+    header_row = 0
+    for i in range(len(raw)):
         if any("Chassi" in str(v) for v in raw.iloc[i].tolist()):
             header_row = i; break
     if isinstance(src, BytesIO): src.seek(0)
     df = pd.read_excel(src, header=header_row)
-    df.columns = [c.strip() for c in df.columns]
-    df["_fonte"] = label
-    for col in ["CPFCNPJPROPRIETARIO","NOMEPROPRIETARIO","NO_CIDADE","NO_BAIRRO","Placa","Chassi","Concessionário"]:
-        if col in df.columns: df[col] = df[col].astype(str).str.strip()
-    df["CNPJ_NORM"]     = df["CPFCNPJPROPRIETARIO"].apply(norm_cnpj)
-    df["Data emplacamento"] = pd.to_datetime(df["Data emplacamento"], dayfirst=True, errors="coerce")
-    df["Ano"]           = df["Data emplacamento"].dt.year
-    df["Mes"]           = df["Data emplacamento"].dt.month
-    df["Placa_norm"]    = df["Placa"].str.replace("-","").str.replace(" ","").str.upper()
-    df["NO_CIDADE_NORM"]= df["NO_CIDADE"].apply(norm_str)
-    df["NO_BAIRRO_NORM"]= df["NO_BAIRRO"].apply(lambda x: norm_str(x) if x not in ["nan","None"] else "")
+    df.columns = [str(c).strip() for c in df.columns]
+
+    # Normalizar campos de texto essenciais
+    for col in ["CPFCNPJPROPRIETARIO","NOMEPROPRIETARIO","NO_CIDADE","NO_BAIRRO",
+                "Placa","Chassi","Concessionário","Modelo","Marca","Segmento"]:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+
+    # CNPJ normalizado (só dígitos)
+    df["CNPJ_NORM"] = df["CPFCNPJPROPRIETARIO"].apply(norm_cnpj)
+
+    # Data — tenta dayfirst (dd/mm/yyyy) e mixed
+    df["Data emplacamento"] = pd.to_datetime(
+        df["Data emplacamento"], dayfirst=True, errors="coerce"
+    )
+    # Fallback para formato americano se muitos nulos
+    if df["Data emplacamento"].isna().sum() > len(df) * 0.5:
+        df["Data emplacamento"] = pd.to_datetime(
+            df["Data emplacamento"], errors="coerce"
+        )
+
+    df["Ano"] = df["Data emplacamento"].dt.year
+    df["Mes"] = df["Data emplacamento"].dt.month
+
+    df["Placa_norm"] = df["Placa"].str.replace("-","").str.replace(" ","").str.upper()
+    df["NO_CIDADE_NORM"] = df["NO_CIDADE"].apply(norm_str)
+    df["NO_BAIRRO_NORM"] = df["NO_BAIRRO"].apply(
+        lambda x: norm_str(x) if str(x) not in ["nan","None",""] else ""
+    )
+
     if "NU_CEP" in df.columns:
         df["CEP_norm"] = df["NU_CEP"].apply(norm_cep)
     else:
         df["CEP_norm"] = ""
+
+    # Remover linhas sem data válida
     df.dropna(subset=["Ano"], inplace=True)
     df["Ano"] = df["Ano"].astype(int)
+    df["Mes"] = df["Mes"].astype(int)
+    df["_fonte"] = label
     return df
 
 def merge_emp(dfs):
@@ -814,13 +838,16 @@ if pagina == "busca":
     buscar = st.button("Buscar Cliente", use_container_width=True)
 
     if buscar and q:
-        q_norm  = norm_str(q)
-        q_cnpj  = norm_cnpj(q)
-        mask = (
-            df_emp["NOMEPROPRIETARIO"].str.upper().str.contains(q_norm[:20], na=False) |
-            df_emp["CNPJ_NORM"].str.contains(q_cnpj, na=False) |
-            df_emp["Placa_norm"].str.contains(q_norm.replace("-","").replace(" ",""), na=False)
-        )
+        q_strip = q.strip()
+        q_norm  = norm_str(q_strip)
+        q_cnpj  = re.sub(r"\D", "", q_strip)   # só dígitos para busca por CNPJ/CPF
+        q_placa = q_strip.replace("-","").replace(" ","").upper()
+
+        mask_nome  = df_emp["NOMEPROPRIETARIO"].str.upper().str.contains(q_norm, na=False, regex=False)
+        mask_cnpj  = (df_emp["CNPJ_NORM"] == q_cnpj) if len(q_cnpj) >= 11 else df_emp["CNPJ_NORM"].str.startswith(q_cnpj) if q_cnpj else pd.Series(False, index=df_emp.index)
+        mask_placa = df_emp["Placa_norm"].str.contains(q_placa, na=False, regex=False) if len(q_placa) >= 3 else pd.Series(False, index=df_emp.index)
+
+        mask = mask_nome | mask_cnpj | mask_placa
         cnpjs = df_emp[mask]["CNPJ_NORM"].unique()
 
         if len(cnpjs) == 0:
@@ -1056,17 +1083,42 @@ if pagina == "busca":
                     st.info("Dados societários não disponíveis.")
 
             with tab_hist:
+                # ── KPIs resumo ──
+                total_h = len(edf)
+                nigris_h = int(is_denigris(edf["Concessionário"]).sum())
+                conc_h   = total_h - nigris_h
+                anos_atv = edf["Ano"].nunique()
+                h1, h2, h3, h4 = st.columns(4)
+                h1.metric("Total", total_h)
+                h2.metric("De Nigris", nigris_h)
+                h3.metric("Concorrência", conc_h)
+                h4.metric("Anos ativo", anos_atv)
+
+                # ── Gráfico por ano ──
                 hist = edf.groupby("Ano").size().reset_index(name="Qtd")
-                fig = go.Figure(go.Bar(x=hist["Ano"].astype(str), y=hist["Qtd"],
-                    marker_color="#0a1628", marker_line_color="#c8a84b", marker_line_width=1.5))
-                fig.update_layout(plot_bgcolor="#fff", paper_bgcolor="#fff", font_color="#4a5568",
-                    height=200, margin=dict(t=10,b=10,l=10,r=10),
-                    xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor="#f0f2f7"))
+                hist["Ano"] = hist["Ano"].astype(str)
+                cores = ["#c8a84b" if str(a)==str(hist["Ano"].max()) else "#0a1628" for a in hist["Ano"]]
+                fig = go.Figure(go.Bar(
+                    x=hist["Ano"], y=hist["Qtd"],
+                    marker_color=cores,
+                    marker_line_color="#c8a84b", marker_line_width=1.5,
+                    text=hist["Qtd"], textposition="outside"
+                ))
+                fig.update_layout(
+                    plot_bgcolor="#fff", paper_bgcolor="#fff", font_color="#4a5568",
+                    height=220, margin=dict(t=30,b=10,l=10,r=10),
+                    xaxis=dict(showgrid=False, title=""),
+                    yaxis=dict(showgrid=True, gridcolor="#f0f2f7", title="Qtd"),
+                    title=dict(text="Emplacamentos por Ano", font=dict(size=13, color="#0a1628"), x=0)
+                )
                 st.plotly_chart(fig, use_container_width=True)
 
-                det = esrt[["Data emplacamento","Placa","Modelo","Marca","Concessionário","Ano"]].copy()
+                # ── Tabela completa ──
+                st.markdown(f'<div class="sec-title">📋 Histórico Completo ({total_h} registros)</div>', unsafe_allow_html=True)
+                det = esrt[["Data emplacamento","Placa","Modelo","Marca","Concessionário","NO_CIDADE"]].copy()
                 det["Data emplacamento"] = det["Data emplacamento"].dt.strftime("%d/%m/%Y")
-                det.columns = ["Data","Placa","Modelo","Marca","Concessionária","Ano"]
+                det["De Nigris"] = is_denigris(esrt["Concessionário"]).map({True:"✅","False":"—"})
+                det.columns = ["Data","Placa","Modelo","Marca","Concessionária","Cidade"]
                 st.dataframe(det, use_container_width=True, hide_index=True)
 
     elif buscar and not q:
@@ -1100,21 +1152,28 @@ elif pagina == "emplacamentos":
     ano_default = int(ultimo_registro.year)
     mes_default = int(ultimo_registro.month)
 
-    anos_disp = sorted([a for a in df_emp["Ano"].unique() if a <= hoje.year], reverse=True)
+    anos_disp = sorted([int(a) for a in df_emp["Ano"].dropna().unique() if int(a) <= hoje.year], reverse=True)
     if not anos_disp:
-        anos_disp = sorted(df_emp["Ano"].unique(), reverse=True)
+        anos_disp = sorted([int(a) for a in df_emp["Ano"].dropna().unique()], reverse=True)
 
     fc1, fc2 = st.columns(2)
     with fc1:
         idx_ano = anos_disp.index(ano_default) if ano_default in anos_disp else 0
         sel_ano = st.selectbox("Ano:", anos_disp, index=idx_ano)
     with fc2:
-        meses_disp = sorted(df_emp[df_emp["Ano"]==sel_ano]["Mes"].unique().tolist())
-        mes_labels = [MESES_PT[m] for m in meses_disp]
-        mes_def_lbl = MESES_PT.get(mes_default, mes_labels[-1])
+        # Meses disponíveis APENAS para o ano selecionado
+        meses_do_ano = sorted(df_emp[df_emp["Ano"] == sel_ano]["Mes"].dropna().astype(int).unique().tolist())
+        if not meses_do_ano:
+            meses_do_ano = list(range(1, 13))
+        mes_labels = [MESES_PT[m] for m in meses_do_ano]
+        # Mês default: último mês do ano selecionado (ou mes_default se for o ano atual)
+        if sel_ano == ano_default and mes_default in meses_do_ano:
+            mes_def_lbl = MESES_PT[mes_default]
+        else:
+            mes_def_lbl = mes_labels[-1]
         idx_mes = mes_labels.index(mes_def_lbl) if mes_def_lbl in mes_labels else len(mes_labels)-1
         sel_mes_lbl = st.selectbox("Mês:", mes_labels, index=idx_mes)
-        sel_mes = meses_disp[mes_labels.index(sel_mes_lbl)]
+        sel_mes = meses_do_ano[mes_labels.index(sel_mes_lbl)]
 
     # Obter área
     if sel_cons == "Todos":
@@ -1415,7 +1474,7 @@ elif pagina == "painel":
         st.warning("⚠️ Dados não carregados.")
         st.stop()
 
-    anos_d = sorted(df_emp["Ano"].unique(), reverse=True)
+    anos_d = sorted([int(a) for a in df_emp["Ano"].dropna().unique()], reverse=True)
     anos_s = st.multiselect("Anos:", anos_d, default=anos_d)
     df_p   = df_emp[df_emp["Ano"].isin(anos_s)] if anos_s else df_emp
 
@@ -1489,7 +1548,7 @@ elif pagina == "gestao":
     <p>Análise detalhada por período e consultor</p></div>""", unsafe_allow_html=True)
     if df_emp is None: st.warning("⚠️ Dados não carregados."); st.stop()
 
-    anos_g = sorted(df_emp["Ano"].unique(), reverse=True)
+    anos_g = sorted([int(a) for a in df_emp["Ano"].dropna().unique()], reverse=True)
     cons_g = ["Todos"] + (sorted(df_area[df_area["Consultor"]!="ZONA LIVRE"]["Consultor"].str.title().unique().tolist()) if df_area is not None else [])
     marcas_g = ["Todas"] + sorted(df_emp["Marca"].dropna().unique().tolist())
     # Meses com dados reais
@@ -1815,8 +1874,9 @@ elif pagina == "admin":
             st.markdown(f'<div class="kpi-card"><div class="kpi-label">Carteira</div><div class="kpi-value" style="font-size:16px;">{sc}</div></div>', unsafe_allow_html=True)
         with s3:
             if df_emp is not None:
-                anos_e = sorted(df_emp["Ano"].unique())
-                se = f"✅ {len(df_emp):,} registros"
+                anos_e = sorted([int(a) for a in df_emp["Ano"].dropna().unique()])
+                anos_str = f"{anos_e[0]}–{anos_e[-1]}" if len(anos_e)>1 else str(anos_e[0]) if anos_e else "?"
+                se = f"✅ {len(df_emp):,} registros<br><small>{anos_str}</small>"
             else: se = "⚠️ Não carregados"
             st.markdown(f'<div class="kpi-card"><div class="kpi-label">Emplacamentos</div><div class="kpi-value" style="font-size:14px;">{se}</div></div>', unsafe_allow_html=True)
 
