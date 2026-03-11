@@ -481,33 +481,29 @@ def load_users():
     }
 
 def save_users(users):
-    """Salva usuários: 1º GitHub (persistente), 2º arquivo local (cache)."""
+    """Salva usuarios: 1o GitHub (persistente), 2o arquivo local (cache).
+    Retorna (gh_ok: bool, erro: str)."""
     os.makedirs(DATA_DIR, exist_ok=True)
     content_str = json.dumps(users, ensure_ascii=False, indent=2)
     content_bytes = content_str.encode("utf-8")
-
-    # 1. Salvar no GitHub (persistência real entre reboots)
-    token, repo, branch = _gh_secrets()
     gh_ok = False
+    gh_err = "GitHub nao configurado"
+    token, repo, branch = _gh_secrets()
     if token and repo:
         api_url = f"https://api.github.com/repos/{repo}/contents/data/users.json"
         _, sha_or_err = _gh_get_file(api_url, token)
-        sha = sha_or_err if (sha_or_err and not sha_or_err.startswith("HTTP")) else ""
-        gh_ok, _gh_err = _gh_put_file(api_url, token, branch, content_bytes, sha)
-
-    # 2. Sempre salvar localmente como cache (rápido, mas efêmero no Cloud)
+        sha = sha_or_err if (sha_or_err and not str(sha_or_err).startswith("HTTP")) else ""
+        gh_ok, gh_err = _gh_put_file(api_url, token, branch, content_bytes, sha)
     try:
-        with open(USERS_FILE,"w",encoding="utf-8") as f:
+        with open(USERS_FILE, "w", encoding="utf-8") as f:
             f.write(content_str)
     except Exception:
         pass
-
-    return gh_ok, _gh_err if not gh_ok else ""  # (bool, erro)
+    return gh_ok, gh_err
 
 def registrar_acesso(login):
     users = st.session_state.get("users_db", load_users())
     if login in users:
-        # Horário de Brasília (UTC-3) — independe do timezone do servidor
         agora_brt = datetime.datetime.utcnow() - datetime.timedelta(hours=3)
         users[login]["ultimo_acesso"] = agora_brt.strftime("%Y-%m-%dT%H:%M:%S")
         save_users(users)
