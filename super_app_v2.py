@@ -384,65 +384,131 @@ def logo_img(height=32):
     return f'<span style="font-size:18px;font-weight:800;color:#fff;">Comercial De Nigris</span>'
 
 # ════════════════════════════════════════════════════════════════
-# USUÁRIOS — users.json no GitHub
 # ════════════════════════════════════════════════════════════════
+# USUÁRIOS — persistência via GitHub API (fonte primária)
+# ════════════════════════════════════════════════════════════════
+_USERS_DEFAULT = {
+    "ADMIN": {
+        "senha_hash": None,  # preenchido abaixo após hash_senha estar definido
+        "perfil": "gestor",
+        "nome": "Administrador",
+        "ultimo_acesso": None
+    }
+}
+
+def _gh_secrets():
+    """Retorna (token, repo, branch) dos secrets do Streamlit."""
+    try:
+        token  = st.secrets.get("GH_TOKEN","")
+        repo   = st.secrets.get("GH_REPO","")
+        branch = st.secrets.get("GH_BRANCH","principal")
+        return token, repo, branch
+    except Exception:
+        return "", "", "principal"
+
+def _gh_get_file(api_url, token):
+    """GET na API do GitHub. Retorna (conteúdo_bytes, sha) ou (None, '')."""
+    import urllib.request
+    try:
+        req = urllib.request.Request(
+            api_url,
+            headers={"Authorization": f"token {token}",
+                     "Accept": "application/vnd.github.v3+json"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read().decode())
+        content = base64.b64decode(data["content"].replace("\n",""))
+        return content, data.get("sha","")
+    except Exception:
+        return None, ""
+
+def _gh_put_file(api_url, token, branch, content_bytes, sha, message="update users.json"):
+    """PUT na API do GitHub. Retorna True se ok."""
+    import urllib.request
+    try:
+        payload = json.dumps({
+            "message": message,
+            "content": base64.b64encode(content_bytes).decode(),
+            "sha": sha,
+            "branch": branch
+        }).encode()
+        req = urllib.request.Request(
+            api_url, data=payload, method="PUT",
+            headers={"Authorization": f"token {token}",
+                     "Content-Type": "application/json",
+                     "Accept": "application/vnd.github.v3+json"}
+        )
+        with urllib.request.urlopen(req, timeout=15): pass
+        return True
+    except Exception:
+        return False
+
 def load_users():
+    """Carrega usuários: 1º tenta GitHub, 2º arquivo local, 3º default."""
+    token, repo, branch = _gh_secrets()
+
+    # 1. Tentar GitHub (fonte primária — persiste entre reboots)
+    if token and repo:
+        api_url = f"https://api.github.com/repos/{repo}/contents/data/users.json"
+        content, _ = _gh_get_file(api_url, token)
+        if content:
+            try:
+                users = json.loads(content.decode("utf-8"))
+                # Salva localmente como cache
+                os.makedirs(DATA_DIR, exist_ok=True)
+                with open(USERS_FILE,"w",encoding="utf-8") as f:
+                    f.write(json.dumps(users, ensure_ascii=False, indent=2))
+                return users
+            except Exception:
+                pass
+
+    # 2. Arquivo local (cache ou deploy sem GitHub configurado)
     if os.path.exists(USERS_FILE):
-        with open(USERS_FILE,"r",encoding="utf-8") as f:
-            return json.load(f)
-    # Default se não existir
+        try:
+            with open(USERS_FILE,"r",encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+
+    # 3. Default mínimo
     return {
         "ADMIN": {
             "senha_hash": hash_senha("admin2025"),
             "perfil": "gestor",
             "nome": "Administrador",
             "ultimo_acesso": None
-        },
-        "GERENTE": {
-            "senha_hash": hash_senha("gerente2025"),
-            "perfil": "gerente",
-            "nome": "Gerente",
-            "ultimo_acesso": None
         }
     }
 
 def save_users(users):
-    """Salva users.json localmente E no GitHub (persistência entre reboots)."""
+    """Salva usuários: 1º GitHub (persistente), 2º arquivo local (cache)."""
     os.makedirs(DATA_DIR, exist_ok=True)
-    content = json.dumps(users, ensure_ascii=False, indent=2)
-    # Salva localmente
-    with open(USERS_FILE,"w",encoding="utf-8") as f:
-        f.write(content)
-    # Salva no GitHub para persistir entre reboots
+    content_str = json.dumps(users, ensure_ascii=False, indent=2)
+    content_bytes = content_str.encode("utf-8")
+
+    # 1. Salvar no GitHub (persistência real entre reboots)
+    token, repo, branch = _gh_secrets()
+    gh_ok = False
+    if token and repo:
+        api_url = f"https://api.github.com/repos/{repo}/contents/data/users.json"
+        _, sha = _gh_get_file(api_url, token)
+        gh_ok = _gh_put_file(api_url, token, branch, content_bytes, sha)
+
+    # 2. Sempre salvar localmente como cache (rápido, mas efêmero no Cloud)
     try:
-        import urllib.request, urllib.error
-        token = st.secrets.get("GH_TOKEN","") if hasattr(st,"secrets") else ""
-        repo  = st.secrets.get("GH_REPO","") if hasattr(st,"secrets") else ""
-        if token and repo:
-            api_url = f"https://api.github.com/repos/{repo}/contents/data/users.json"
-            # Pega SHA atual do arquivo
-            req_get = urllib.request.Request(api_url, headers={"Authorization":f"token {token}","Accept":"application/vnd.github.v3+json"})
-            try:
-                with urllib.request.urlopen(req_get) as resp:
-                    sha = json.loads(resp.read().decode()).get("sha","")
-            except: sha = ""
-            # Faz o PUT
-            payload = json.dumps({
-                "message":"update users.json",
-                "content": base64.b64encode(content.encode()).decode(),
-                "sha": sha,
-                "branch": st.secrets.get("GH_BRANCH","principal")
-            }).encode()
-            req_put = urllib.request.Request(api_url, data=payload, method="PUT",
-                headers={"Authorization":f"token {token}","Content-Type":"application/json","Accept":"application/vnd.github.v3+json"})
-            with urllib.request.urlopen(req_put): pass
+        with open(USERS_FILE,"w",encoding="utf-8") as f:
+            f.write(content_str)
     except Exception:
-        pass  # falha silenciosa — arquivo local já foi salvo
+        pass
+
+    return gh_ok  # retorna se GitHub foi atualizado
 
 def registrar_acesso(login):
     users = st.session_state.get("users_db", load_users())
     if login in users:
-        users[login]["ultimo_acesso"] = datetime.datetime.now().isoformat()
+        # Horário de Brasília (UTC-3) — independe do timezone do servidor
+        agora_brt = datetime.datetime.utcnow() - datetime.timedelta(hours=3)
+        users[login]["ultimo_acesso"] = agora_brt.strftime("%Y-%m-%dT%H:%M:%S")
         save_users(users)
         st.session_state.users_db = users
 
@@ -1623,8 +1689,8 @@ elif pagina == "emplacamentos":
     # Q3: Compraram na Comercial De Nigris (no mês, área + carteira)
     q3_df = emp_mes[is_denigris(emp_mes["Concessionário"])].copy()
 
-    # Q4: Top 3 histórico (área + carteira, todos os anos)
-    top_hist = emp_area.groupby(["CNPJ_NORM","NOMEPROPRIETARIO","NO_CIDADE"]).agg(
+    # Q4: Top 3 do período selecionado (mês/ano filtrado)
+    top_hist = emp_mes.groupby(["CNPJ_NORM","NOMEPROPRIETARIO","NO_CIDADE"]).agg(
         Total=("Chassi","count"),
         Nigris=("Concessionário", lambda x: is_denigris(x).sum()),
     ).reset_index().sort_values("Total", ascending=False).head(3).reset_index(drop=True)
@@ -1687,8 +1753,8 @@ elif pagina == "emplacamentos":
         st.markdown(f"""<div class="quadrant">
             <div class="quadrant-header">
                 <div>
-                    <div class="quadrant-title">🏆 Top 3 Histórico</div>
-                    <div style="font-size:11px;color:#8a95b0;margin-top:2px;">Maiores clientes da área (todos os anos)</div>
+                    <div class="quadrant-title">🏆 Top 3 do Período</div>
+                    <div style="font-size:11px;color:#8a95b0;margin-top:2px;">Maiores compradores no mês/ano selecionado</div>
                 </div>
                 <div class="quadrant-count q-blue">{len(top_hist)}</div>
             </div>
@@ -2425,13 +2491,33 @@ elif pagina == "admin":
     with tab_u:
         USERS = st.session_state.users_db
 
+        # ── Status GitHub ──
+        token_gh, repo_gh, branch_gh = _gh_secrets()
+        if token_gh and repo_gh:
+            api_test = f"https://api.github.com/repos/{repo_gh}/contents/data/users.json"
+            _, sha_test = _gh_get_file(api_test, token_gh)
+            if sha_test:
+                st.markdown(f'<div class="alert-blue" style="margin-bottom:10px;">✅ <strong>GitHub conectado</strong> — repo: <code>{repo_gh}</code> · branch: <code>{branch_gh}</code> · usuários persistem entre reboots.</div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div style="background:#fff8e0;border-left:4px solid #f0a000;padding:10px 14px;border-radius:8px;margin-bottom:10px;font-size:12px;">⚠️ <strong>GitHub configurado mas não acessível.</strong> Verifique se o token tem permissão de escrita e se o repo/branch estão corretos.</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="background:#fff0f0;border-left:4px solid #c0392b;padding:10px 14px;border-radius:8px;margin-bottom:10px;font-size:12px;">🔴 <strong>GitHub não configurado.</strong> Usuários só persistem até o próximo reboot. Configure <code>GH_TOKEN</code>, <code>GH_REPO</code> e <code>GH_BRANCH</code> nos Secrets do Streamlit Cloud (Settings → Secrets).</div>', unsafe_allow_html=True)
+
         st.markdown('<div class="sec-title">👥 Usuários Cadastrados</div>', unsafe_allow_html=True)
 
         # Tabela de usuários com último acesso
         rows = []
         for login, ud in USERS.items():
             ua = ud.get("ultimo_acesso")
-            ua_fmt = datetime.datetime.fromisoformat(ua).strftime("%d/%m/%Y %H:%M") if ua else "Nunca"
+            if ua:
+                try:
+                    # Suporta formatos: "2025-01-15T14:32:00", "2025-01-15T14:32:00.123456", etc.
+                    ua_dt = datetime.datetime.fromisoformat(str(ua).split("+")[0].split("Z")[0][:19])
+                    ua_fmt = ua_dt.strftime("%d/%m/%Y %H:%M") + " (BRT)"
+                except Exception:
+                    ua_fmt = str(ua)[:16]
+            else:
+                ua_fmt = "Nunca"
             rows.append({"Login":login,"Nome":ud.get("nome",""),"Perfil":ud.get("perfil",""),"Último Acesso":ua_fmt})
         df_u = pd.DataFrame(rows)
         st.dataframe(df_u, use_container_width=True, hide_index=True)
@@ -2526,18 +2612,24 @@ elif pagina == "admin":
                     "consultor_key": norm_str(new_cons_key) if new_cons_key else norm_str(new_login),
                     "ultimo_acesso": USERS.get(new_login, {}).get("ultimo_acesso")
                 }
-                save_users(USERS)
+                gh_ok = save_users(USERS)
                 st.session_state.users_db = USERS
-                st.success(f"✅ Usuário **{new_login}** salvo! Vinculado a: {new_cons_key or '—'}")
+                if gh_ok:
+                    st.success(f"✅ Usuário **{new_login}** salvo e sincronizado com GitHub!")
+                else:
+                    st.warning(f"⚠️ Usuário **{new_login}** salvo localmente, mas **não sincronizou com GitHub**. Verifique os secrets GH_TOKEN / GH_REPO / GH_BRANCH no Streamlit Cloud.")
                 st.rerun()
 
         st.markdown('<div class="sec-title">🗑️ Excluir Usuário</div>', unsafe_allow_html=True)
         del_login = st.selectbox("Selecionar para excluir:", [l for l in USERS.keys() if l != u_key])
         if st.button("❌ Excluir Usuário", use_container_width=True):
             del USERS[del_login]
-            save_users(USERS)
+            gh_ok = save_users(USERS)
             st.session_state.users_db = USERS
-            st.success(f"✅ Usuário {del_login} excluído!")
+            if gh_ok:
+                st.success(f"✅ Usuário {del_login} excluído e sincronizado!")
+            else:
+                st.warning(f"⚠️ Usuário {del_login} excluído localmente — verifique secrets do GitHub.")
             st.rerun()
 
     # ── TAB DADOS ──
