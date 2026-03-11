@@ -450,7 +450,7 @@ def load_users():
     # 1. Tentar GitHub (fonte primária — persiste entre reboots)
     if token and repo:
         api_url = f"https://api.github.com/repos/{repo}/contents/data/users.json"
-        content, _ = _gh_get_file(api_url, token)
+        content, _err = _gh_get_file(api_url, token)
         if content:
             try:
                 users = json.loads(content.decode("utf-8"))
@@ -491,8 +491,9 @@ def save_users(users):
     gh_ok = False
     if token and repo:
         api_url = f"https://api.github.com/repos/{repo}/contents/data/users.json"
-        _, sha = _gh_get_file(api_url, token)
-        gh_ok = _gh_put_file(api_url, token, branch, content_bytes, sha)
+        _, sha_or_err = _gh_get_file(api_url, token)
+        sha = sha_or_err if (sha_or_err and not sha_or_err.startswith("HTTP")) else ""
+        gh_ok, _gh_err = _gh_put_file(api_url, token, branch, content_bytes, sha)
 
     # 2. Sempre salvar localmente como cache (rápido, mas efêmero no Cloud)
     try:
@@ -501,7 +502,7 @@ def save_users(users):
     except Exception:
         pass
 
-    return gh_ok  # retorna se GitHub foi atualizado
+    return gh_ok, _gh_err if not gh_ok else ""  # (bool, erro)
 
 def registrar_acesso(login):
     users = st.session_state.get("users_db", load_users())
@@ -2495,11 +2496,11 @@ elif pagina == "admin":
         token_gh, repo_gh, branch_gh = _gh_secrets()
         if token_gh and repo_gh:
             api_test = f"https://api.github.com/repos/{repo_gh}/contents/data/users.json"
-            _, sha_test = _gh_get_file(api_test, token_gh)
-            if sha_test:
+            content_test, sha_or_err = _gh_get_file(api_test, token_gh)
+            if content_test is not None:
                 st.markdown(f'<div class="alert-blue" style="margin-bottom:10px;">✅ <strong>GitHub conectado</strong> — repo: <code>{repo_gh}</code> · branch: <code>{branch_gh}</code> · usuários persistem entre reboots.</div>', unsafe_allow_html=True)
             else:
-                st.markdown(f'<div style="background:#fff8e0;border-left:4px solid #f0a000;padding:10px 14px;border-radius:8px;margin-bottom:10px;font-size:12px;">⚠️ <strong>GitHub configurado mas não acessível.</strong> Verifique se o token tem permissão de escrita e se o repo/branch estão corretos.</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="background:#fff8e0;border-left:4px solid #f0a000;padding:10px 14px;border-radius:8px;margin-bottom:10px;font-size:12px;">⚠️ <strong>GitHub com erro.</strong> Detalhes: <code>{sha_or_err}</code></div>', unsafe_allow_html=True)
         else:
             st.markdown('<div style="background:#fff0f0;border-left:4px solid #c0392b;padding:10px 14px;border-radius:8px;margin-bottom:10px;font-size:12px;">🔴 <strong>GitHub não configurado.</strong> Usuários só persistem até o próximo reboot. Configure <code>GH_TOKEN</code>, <code>GH_REPO</code> e <code>GH_BRANCH</code> nos Secrets do Streamlit Cloud (Settings → Secrets).</div>', unsafe_allow_html=True)
 
@@ -2612,24 +2613,24 @@ elif pagina == "admin":
                     "consultor_key": norm_str(new_cons_key) if new_cons_key else norm_str(new_login),
                     "ultimo_acesso": USERS.get(new_login, {}).get("ultimo_acesso")
                 }
-                gh_ok = save_users(USERS)
+                gh_ok, gh_err = save_users(USERS)
                 st.session_state.users_db = USERS
                 if gh_ok:
                     st.success(f"✅ Usuário **{new_login}** salvo e sincronizado com GitHub!")
                 else:
-                    st.warning(f"⚠️ Usuário **{new_login}** salvo localmente, mas **não sincronizou com GitHub**. Verifique os secrets GH_TOKEN / GH_REPO / GH_BRANCH no Streamlit Cloud.")
+                    st.warning(f"⚠️ Não sincronizou com GitHub: {gh_err}")
                 st.rerun()
 
         st.markdown('<div class="sec-title">🗑️ Excluir Usuário</div>', unsafe_allow_html=True)
         del_login = st.selectbox("Selecionar para excluir:", [l for l in USERS.keys() if l != u_key])
         if st.button("❌ Excluir Usuário", use_container_width=True):
             del USERS[del_login]
-            gh_ok = save_users(USERS)
+            gh_ok, gh_err = save_users(USERS)
             st.session_state.users_db = USERS
             if gh_ok:
                 st.success(f"✅ Usuário {del_login} excluído e sincronizado!")
             else:
-                st.warning(f"⚠️ Usuário {del_login} excluído localmente — verifique secrets do GitHub.")
+                st.warning(f"⚠️ Não sincronizou: {gh_err}")
             st.rerun()
 
     # ── TAB DADOS ──
