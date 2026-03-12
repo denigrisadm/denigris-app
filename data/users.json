@@ -3,6 +3,84 @@
     "senha_hash": "0e89f223e226ae63268cf39152ab75722e811b89d29efb22a852f1667bd22ae0",
     "perfil": "gestor",
     "nome": "Administrador",
+    "consultor_key": "ADMIN",
+    "ultimo_acesso": null
+  },
+  "ALEX": {
+    "senha_hash": "d9508122cd143d69df229bf3624b7bcb2b8ac81ed210a0c926455ef119c12abd",
+    "perfil": "vendedor",
+    "nome": "Alex Mendes",
+    "consultor_key": "ALEX MENDES",
+    "ultimo_acesso": null
+  },
+  "CARLOS": {
+    "senha_hash": "ac9c2c34c9f7ad52528c3422af40a66e2e24aaf2a727831255413c9470158984",
+    "perfil": "vendedor",
+    "nome": "Carlos Alberto Ferreira",
+    "consultor_key": "CARLOS ALBERTO FERREIRA",
+    "ultimo_acesso": null
+  },
+  "FRANCISCO": {
+    "senha_hash": "ac03a282361db80d1f71f92a06afa156f81b4350d71ce79d8b541f281340a30d",
+    "perfil": "vendedor",
+    "nome": "Francisco Carlos Andrade",
+    "consultor_key": "FRANCISCO CARLOS DE ANDRADE",
+    "ultimo_acesso": null
+  },
+  "GLADSTON": {
+    "senha_hash": "1cda5da1d9897ff4f5c7be1529a708e792b4222385e99a1f42dc7fa8770f71c4",
+    "perfil": "vendedor",
+    "nome": "Gladston Barbosa",
+    "consultor_key": "GLADSTON BARBOSA",
+    "ultimo_acesso": null
+  },
+  "JANAINA": {
+    "senha_hash": "92c721e582a08bf2a9897e0f3c606f61976efdaf16e65e79eccc7f3cf422ed17",
+    "perfil": "vendedor",
+    "nome": "Janaina Broglio",
+    "consultor_key": "JANAINA BROGLIO",
+    "ultimo_acesso": null
+  },
+  "LEONARDO": {
+    "senha_hash": "a0ce073d8054fe1bb21b792266aba41130a430594264827a113d1bb3e9c85f8d",
+    "perfil": "vendedor",
+    "nome": "Leonardo Carneiro",
+    "consultor_key": "LEONARDO CARNEIRO",
+    "ultimo_acesso": null
+  },
+  "PAULO": {
+    "senha_hash": "f89678cc6765848121941f97f563647a0fe77cc7947842dbddb67ba8bacf3c21",
+    "perfil": "vendedor",
+    "nome": "Paulo Cesar Lameu",
+    "consultor_key": "PAULO CESAR LAMEU",
+    "ultimo_acesso": null
+  },
+  "RENATA": {
+    "senha_hash": "9ca9b4638548ca0c4182e5ab929f96d1e6b233662ae59e3c254f24c1beed796b",
+    "perfil": "vendedor",
+    "nome": "Renata Bellon",
+    "consultor_key": "RENATA BELLON",
+    "ultimo_acesso": null
+  },
+  "ROSANGELA": {
+    "senha_hash": "ae2bd855be442a1284fc878aa5a074fc85b2acf54dc8b41294d2a7a354d2cb30",
+    "perfil": "vendedor",
+    "nome": "Rosangela Caetano",
+    "consultor_key": "ROSANGELA CAETANO",
+    "ultimo_acesso": null
+  },
+  "SUZAN": {
+    "senha_hash": "1f9979ecde2f2735d7384365fc41f3b81bb6ae09cfe2d233865252976a50fa88",
+    "perfil": "vendedor",
+    "nome": "Suzan Oda",
+    "consultor_key": "SUZAN ODA",
+    "ultimo_acesso": null
+  },
+  "VALMIR": {
+    "senha_hash": "c118a34f9e426ba5749c784dc69d25ac6aa12ebd7ea698abc616fd57ee10b729",
+    "perfil": "vendedor",
+    "nome": "Valmir de Oliveira",
+    "consultor_key": "VALMIR DE OLIVEIRA",
     "ultimo_acesso": null
   }
 }
