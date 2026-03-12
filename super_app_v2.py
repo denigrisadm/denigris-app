@@ -490,10 +490,20 @@ def save_users(users):
     gh_err = "GitHub nao configurado"
     token, repo, branch = _gh_secrets()
     if token and repo:
-        api_url = f"https://api.github.com/repos/{repo}/contents/data/users.json"
-        _, sha_or_err = _gh_get_file(api_url, token)
-        sha = sha_or_err if (sha_or_err and not str(sha_or_err).startswith("HTTP")) else ""
-        gh_ok, gh_err = _gh_put_file(api_url, token, branch, content_bytes, sha)
+        try:
+            api_url = f"https://api.github.com/repos/{repo}/contents/data/users.json"
+            _, sha_or_err = _gh_get_file(api_url, token)
+            sha = sha_or_err if (sha_or_err and not str(sha_or_err).startswith("HTTP")) else ""
+            resultado = _gh_put_file(api_url, token, branch, content_bytes, sha)
+            # compatível com retorno bool OU tupla (bool, str)
+            if isinstance(resultado, tuple):
+                gh_ok, gh_err = resultado
+            else:
+                gh_ok = bool(resultado)
+                gh_err = "" if gh_ok else "Falha no envio"
+        except Exception as e:
+            gh_ok = False
+            gh_err = str(e)
     try:
         with open(USERS_FILE, "w", encoding="utf-8") as f:
             f.write(content_str)
@@ -504,10 +514,13 @@ def save_users(users):
 def registrar_acesso(login):
     users = st.session_state.get("users_db", load_users())
     if login in users:
-        agora_brt = datetime.datetime.utcnow() - datetime.timedelta(hours=3)
-        users[login]["ultimo_acesso"] = agora_brt.strftime("%Y-%m-%dT%H:%M:%S")
-        save_users(users)
-        st.session_state.users_db = users
+        try:
+            agora_brt = datetime.datetime.utcnow() - datetime.timedelta(hours=3)
+            users[login]["ultimo_acesso"] = agora_brt.strftime("%Y-%m-%dT%H:%M:%S")
+            save_users(users)
+            st.session_state.users_db = users
+        except Exception:
+            pass  # nunca travar o login por causa de persistência
 
 # ════════════════════════════════════════════════════════════════
 # CARREGAMENTO DE DADOS
