@@ -1241,15 +1241,36 @@ if pagina == "busca":
     if buscar and q:
         q_strip = q.strip()
         q_norm  = norm_str(q_strip)
-        q_cnpj  = re.sub(r"\D", "", q_strip)   # só dígitos para busca por CNPJ/CPF
+        q_cnpj  = re.sub(r"\D", "", q_strip)
         q_placa = q_strip.replace("-","").replace(" ","").upper()
 
-        mask_nome  = df_emp["NOMEPROPRIETARIO"].str.upper().str.contains(q_norm, na=False, regex=False)
-        mask_cnpj  = (df_emp["CNPJ_NORM"] == q_cnpj) if len(q_cnpj) >= 11 else df_emp["CNPJ_NORM"].str.startswith(q_cnpj) if q_cnpj else pd.Series(False, index=df_emp.index)
+        # Busca por tokens: cada palavra deve aparecer no nome (sem acento)
+        tokens = [t for t in q_norm.split() if len(t) >= 2]
+        nome_norm_series = df_emp["NOMEPROPRIETARIO"].apply(norm_str)
+        if tokens:
+            mask_nome = pd.Series(True, index=df_emp.index)
+            for tok in tokens:
+                mask_nome = mask_nome & nome_norm_series.str.contains(tok, na=False, regex=False)
+        else:
+            mask_nome = pd.Series(False, index=df_emp.index)
+
+        if len(q_cnpj) >= 11:
+            mask_cnpj = df_emp["CNPJ_NORM"] == q_cnpj
+        elif len(q_cnpj) >= 3:
+            mask_cnpj = df_emp["CNPJ_NORM"].str.startswith(q_cnpj)
+        else:
+            mask_cnpj = pd.Series(False, index=df_emp.index)
+
         mask_placa = df_emp["Placa_norm"].str.contains(q_placa, na=False, regex=False) if len(q_placa) >= 3 else pd.Series(False, index=df_emp.index)
 
         mask = mask_nome | mask_cnpj | mask_placa
-        cnpjs = df_emp[mask]["CNPJ_NORM"].unique()
+        resultados = df_emp[mask].copy()
+        if not resultados.empty and tokens:
+            resultados["_score"] = resultados["NOMEPROPRIETARIO"].apply(
+                lambda x: sum(tok in norm_str(str(x)) for tok in tokens)
+            )
+            resultados = resultados.sort_values("_score", ascending=False)
+        cnpjs = resultados["CNPJ_NORM"].unique()
 
         if len(cnpjs) == 0:
             st.warning("Nenhum cliente encontrado.")
