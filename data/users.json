@@ -89,5 +89,12 @@
     "nome": "ADEMIR ANDRADE",
     "consultor_key": "ADEMIR",
     "ultimo_acesso": "2026-03-16T15:46:42"
+  },
+  "MARCELINO": {
+    "senha_hash": "f92261a910b1ccbf92529e95ddb14fa973758fe741d45ff443576a52734fd567",
+    "perfil": "gerente",
+    "nome": "MARCELINO",
+    "consultor_key": "MARCELINO",
+    "ultimo_acesso": null
   }
 }
