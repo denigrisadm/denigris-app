@@ -1109,7 +1109,7 @@ if st.session_state.user is None:
                 {logo_html}
             </div>
             <div style="font-size:11px;color:#8a95b0;text-transform:uppercase;
-                        letter-spacing:2px;margin-top:4px;margin-bottom:4px;">Inteligência Comercial - EMPLAMENTOS CAMINHÕES</div>
+                        letter-spacing:2px;margin-top:4px;margin-bottom:4px;">Inteligência Comercial - EMPLACAMENTOS CAMINHÕES</div>
         </div>
         """, unsafe_allow_html=True)
 
