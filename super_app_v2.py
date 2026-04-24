@@ -642,9 +642,9 @@ def load_emplacamentos(src, label=""):
     df["NO_BAIRRO_NORM"] = norm_str_series(df["NO_BAIRRO"].fillna(""))
 
     if "NU_CEP" in df.columns:
-        df["CEP_norm"] = (df["NU_CEP"].astype(str)
-                          .str.replace(r"\D","",regex=True)
-                          .str.zfill(8).str[:8])
+        # CEP: float(6529220.0) → int(6529220) → zfill → "06529220"
+        # Não usar str.replace direto pois float perde o zero inicial
+        df["CEP_norm"] = df["NU_CEP"].apply(norm_cep)
     else:
         df["CEP_norm"] = ""
 
