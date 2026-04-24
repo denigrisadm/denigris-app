@@ -1713,28 +1713,25 @@ elif pagina == "emplacamentos":
 
     cnpjs_carteira_set = set(cnpjs_carteira)
 
-    # ── ÁREA: CEP primeiro, cidade como fallback ──
-    # emp_da_area já faz: tenta CEP, fallback cidade
-    emp_area_total = emp_da_area(df_emp, munic_area, cep_ranges)
-
-    # ── Para vendedor específico: adicionar também clientes DA SUA CARTEIRA
-    # que emplacaram fora da área (mas são dele pela carteira)
-    if sel_cons != "Todos" and len(cnpjs_carteira_set) > 0:
-        emp_cart_extra = df_emp[
-            df_emp["CNPJ_NORM"].isin(cnpjs_carteira_set) &
-            ~df_emp.index.isin(emp_area_total.index)
-        ]
-        emp_area = pd.concat([emp_area_total, emp_cart_extra], ignore_index=True)
+    if sel_cons == "Todos":
+        # Admin/Todos: usa TODA a base — não filtra por área
+        emp_area = df_emp.copy()
+        emp_mes  = df_emp[(df_emp["Ano"]==sel_ano) & (df_emp["Mes"]==sel_mes)].copy()
     else:
-        emp_area = emp_area_total
-
-    # Remover clientes que estão na carteira de OUTRO vendedor
-    # (exceto se estiverem na carteira DO vendedor consultado)
-    if sel_cons != "Todos":
+        # Vendedor específico: filtra por área geográfica + carteira
+        emp_area_total = emp_da_area(df_emp, munic_area, cep_ranges)
+        if len(cnpjs_carteira_set) > 0:
+            emp_cart_extra = df_emp[
+                df_emp["CNPJ_NORM"].isin(cnpjs_carteira_set) &
+                ~df_emp.index.isin(emp_area_total.index)
+            ]
+            emp_area = pd.concat([emp_area_total, emp_cart_extra], ignore_index=True)
+        else:
+            emp_area = emp_area_total
+        # Remover conflitos de carteira
         conflito = cnpjs_outros - cnpjs_carteira_set
         emp_area = emp_area[~emp_area["CNPJ_NORM"].isin(conflito)].copy()
-
-    emp_mes = emp_area[(emp_area["Ano"]==sel_ano) & (emp_area["Mes"]==sel_mes)].copy()
+        emp_mes  = emp_area[(emp_area["Ano"]==sel_ano) & (emp_area["Mes"]==sel_mes)].copy()
 
     # Aviso simples se não há dados no período
     total_emp_geral = len(df_emp[(df_emp["Ano"]==sel_ano) & (df_emp["Mes"]==sel_mes)])
