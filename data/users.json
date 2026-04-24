@@ -89,5 +89,12 @@
     "nome": "MARCELINO",
     "consultor_key": "MARCELINO",
     "ultimo_acesso": "2026-03-16T15:49:13"
+  },
+  "ANA": {
+    "senha_hash": "e408145e7fc3f031d5aa3b08710d0eddabf61cb11864822af9b16b92c0c9c576",
+    "perfil": "gerente",
+    "nome": "ANA CARLA",
+    "consultor_key": "ANA",
+    "ultimo_acesso": null
   }
 }
