@@ -1282,12 +1282,31 @@ if pagina == "busca":
 
         mask_placa = df_emp["Placa_norm"].str.contains(q_placa, na=False, regex=False) if len(q_placa) >= 3 else pd.Series(False, index=df_emp.index)
 
-        mask = mask_nome | mask_cnpj | mask_placa
-        resultados = df_emp[mask].copy()
-        if not resultados.empty and tokens:
-            _nome_s = norm_str_series(resultados["NOMEPROPRIETARIO"])
-            resultados["_score"] = sum(_nome_s.str.contains(tok, na=False, regex=False).astype(int) for tok in tokens)
-            resultados = resultados.sort_values("_score", ascending=False)
+        # ── Busca por placa: exata primeiro, depois substring ──
+        # A placa é única — achamos o veículo e extraímos o dono (CNPJ)
+        if len(q_placa) >= 3:
+            # Exato primeiro
+            mask_placa_exata = df_emp["Placa_norm"] == q_placa
+            if mask_placa_exata.any():
+                mask_placa = mask_placa_exata
+            else:
+                mask_placa = df_emp["Placa_norm"].str.contains(q_placa, na=False, regex=False)
+        else:
+            mask_placa = pd.Series(False, index=df_emp.index)
+
+        # Se busca por placa achou resultado, usar só esse — não misturar com nome/cnpj
+        if mask_placa.any() and len(q_placa) >= 3 and not mask_nome.any() and not mask_cnpj.any():
+            resultados = df_emp[mask_placa].copy()
+            # Ordenar pelo mais recente para pegar o proprietário atual
+            resultados = resultados.sort_values("Data emplacamento", ascending=False)
+        else:
+            mask = mask_nome | mask_cnpj | mask_placa
+            resultados = df_emp[mask].copy()
+            if not resultados.empty and tokens:
+                _nome_s = norm_str_series(resultados["NOMEPROPRIETARIO"])
+                resultados["_score"] = sum(_nome_s.str.contains(tok, na=False, regex=False).astype(int) for tok in tokens)
+                resultados = resultados.sort_values("_score", ascending=False)
+
         cnpjs = resultados["CNPJ_NORM"].unique()
 
         if len(cnpjs) == 0:
@@ -1297,8 +1316,11 @@ if pagina == "busca":
                 opts = []
                 for cn in cnpjs[:20]:
                     sub = df_emp[df_emp["CNPJ_NORM"] == cn]
-                    opts.append(f"{sub['NOMEPROPRIETARIO'].iloc[0]} — {sub['NO_CIDADE'].iloc[0]}")
-                sel = st.selectbox("Selecione:", opts)
+                    nome = sub["NOMEPROPRIETARIO"].iloc[0]
+                    cidade = sub["NO_CIDADE"].iloc[0]
+                    total_cn = len(sub)
+                    opts.append(f"{nome} — {cidade} ({total_cn} empl.)")
+                sel = st.selectbox("Selecione o cliente:", opts)
                 cnpj_sel = cnpjs[opts.index(sel)]
             else:
                 cnpj_sel = cnpjs[0]
