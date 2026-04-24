@@ -1336,296 +1336,296 @@ if pagina == "busca":
             pred_label, pred_date = calc_prediction(datas)
             nigris_cnt = int(is_denigris(edf["Concessionário"]).sum())
 
-            # Dados da carteira
-            cart_row = None
-            if df_cart is not None:
-                cr = df_cart[df_cart["CNPJ_NORM"] == cnpj_sel]
-                cart_row = cr.iloc[0].to_dict() if not cr.empty else None
+        # Dados da carteira
+        cart_row = None
+        if df_cart is not None:
+            cr = df_cart[df_cart["CNPJ_NORM"] == cnpj_sel]
+            cart_row = cr.iloc[0].to_dict() if not cr.empty else None
 
-            # Consultor responsável
-            cep_c  = norm_cep(last.get("NU_CEP",""))
-            cid_c  = norm_str(str(last.get("NO_CIDADE","")))
-            bai_c  = norm_str(str(last.get("NO_BAIRRO","")))
-            consultor_resp = get_consultor(cep_c, cid_c, bai_c, df_area)
-            if consultor_resp is None and cart_row:
-                consultor_resp = safe_str(cart_row.get("VENDEDOR",""))
+        # Consultor responsável
+        cep_c  = norm_cep(last.get("NU_CEP",""))
+        cid_c  = norm_str(str(last.get("NO_CIDADE","")))
+        bai_c  = norm_str(str(last.get("NO_BAIRRO","")))
+        consultor_resp = get_consultor(cep_c, cid_c, bai_c, df_area)
+        if consultor_resp is None and cart_row:
+            consultor_resp = safe_str(cart_row.get("VENDEDOR",""))
 
-            # ── HERO ──
-            nome_exib = safe_str(last.get("NOME_FANTASIA","")) if safe_str(last.get("NOME_FANTASIA","")) != "—" else safe_str(last.get("NOMEPROPRIETARIO",""))
-            cls_raw = safe_str(cart_row.get("Classificação Mercedes","")) if cart_row else "—"
-            badge_h = f'<span class="badge {badge_class(cls_raw)}">{cls_raw}</span>' if cls_raw != "—" else ""
-            resp_h = ""
-            if cart_row:
-                v = safe_str(cart_row.get("VENDEDOR",""))
-                if v != "—": resp_h += f'<span style="background:#e8f0ff;color:#0044aa;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;margin-right:6px;">👤 {v}</span>'
-            if consultor_resp and consultor_resp != "—":
-                resp_h += f'<span style="background:#e8f8ee;color:#007030;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;">📍 {consultor_resp.title()}</span>'
+        # ── HERO ──
+        nome_exib = safe_str(last.get("NOME_FANTASIA","")) if safe_str(last.get("NOME_FANTASIA","")) != "—" else safe_str(last.get("NOMEPROPRIETARIO",""))
+        cls_raw = safe_str(cart_row.get("Classificação Mercedes","")) if cart_row else "—"
+        badge_h = f'<span class="badge {badge_class(cls_raw)}">{cls_raw}</span>' if cls_raw != "—" else ""
+        resp_h = ""
+        if cart_row:
+            v = safe_str(cart_row.get("VENDEDOR",""))
+            if v != "—": resp_h += f'<span style="background:#e8f0ff;color:#0044aa;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;margin-right:6px;">👤 {v}</span>'
+        if consultor_resp and consultor_resp != "—":
+            resp_h += f'<span style="background:#e8f8ee;color:#007030;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;">📍 {consultor_resp.title()}</span>'
 
-            st.markdown(f"""
-            <div class="client-hero">
-                <div class="hero-name">{nome_exib}</div>
-                <div class="hero-cnpj">{safe_str(last.get("CPFCNPJPROPRIETARIO",""))}</div>
-                <div style="margin-top:8px;">{badge_h}</div>
-                <div style="margin-top:8px;">{resp_h}</div>
-                <div class="hero-stats">
-                    <div class="hero-stat">
-                        <div class="hero-stat-val">{total_emp}</div>
-                        <div class="hero-stat-lbl">Emplacamentos</div>
-                    </div>
-                    <div class="hero-stat">
-                        <div class="hero-stat-val" style="color:#44cc88;">{nigris_cnt}</div>
-                        <div class="hero-stat-lbl">De Nigris</div>
-                    </div>
-                    <div class="hero-stat">
-                        <div class="hero-stat-val">{pred_label.split(' de ')[0][:3] if pred_label else '—'}</div>
-                        <div class="hero-stat-lbl">{('Prev. '+pred_label.split(' de ')[1]) if pred_label else 'Sem previsão'}</div>
-                    </div>
+        st.markdown(f"""
+        <div class="client-hero">
+            <div class="hero-name">{nome_exib}</div>
+            <div class="hero-cnpj">{safe_str(last.get("CPFCNPJPROPRIETARIO",""))}</div>
+            <div style="margin-top:8px;">{badge_h}</div>
+            <div style="margin-top:8px;">{resp_h}</div>
+            <div class="hero-stats">
+                <div class="hero-stat">
+                    <div class="hero-stat-val">{total_emp}</div>
+                    <div class="hero-stat-lbl">Emplacamentos</div>
+                </div>
+                <div class="hero-stat">
+                    <div class="hero-stat-val" style="color:#44cc88;">{nigris_cnt}</div>
+                    <div class="hero-stat-lbl">De Nigris</div>
+                </div>
+                <div class="hero-stat">
+                    <div class="hero-stat-val">{pred_label.split(' de ')[0][:3] if pred_label else '—'}</div>
+                    <div class="hero-stat-lbl">{('Prev. '+pred_label.split(' de ')[1]) if pred_label else 'Sem previsão'}</div>
                 </div>
             </div>
-            """, unsafe_allow_html=True)
+        </div>
+        """, unsafe_allow_html=True)
 
-            # ── TABS ──
-            tab_cad, tab_contatos, tab_socios, tab_hist = st.tabs(["📋 Cadastro","📞 Contatos","🤝 Sócios","📈 Histórico"])
+        # ── TABS ──
+        tab_cad, tab_contatos, tab_socios, tab_hist = st.tabs(["📋 Cadastro","📞 Contatos","🤝 Sócios","📈 Histórico"])
 
-            with tab_cad:
-                # Endereço
-                end_parts = [safe_str(last.get(c,""),"") for c in ["TP_LOGR","NO_LOGR","NU_LOGR","NO_COMPL","NO_BAIRRO"]]
-                endereco  = " ".join([p for p in end_parts if p and p!="—"]).strip() or "—"
-                # Cidade
-                cidade_uf = f"{safe_str(last.get('NO_CIDADE',''))} - {safe_str(last.get('SG_ESTADO',''))}"
-                # CEP
-                cep_exib = norm_cep(last.get("NU_CEP",""))
-                if len(cep_exib) == 8: cep_exib = f"{cep_exib[:5]}-{cep_exib[5:]}"
+        with tab_cad:
+            # Endereço
+            end_parts = [safe_str(last.get(c,""),"") for c in ["TP_LOGR","NO_LOGR","NU_LOGR","NO_COMPL","NO_BAIRRO"]]
+            endereco  = " ".join([p for p in end_parts if p and p!="—"]).strip() or "—"
+            # Cidade
+            cidade_uf = f"{safe_str(last.get('NO_CIDADE',''))} - {safe_str(last.get('SG_ESTADO',''))}"
+            # CEP
+            cep_exib = norm_cep(last.get("NU_CEP",""))
+            if len(cep_exib) == 8: cep_exib = f"{cep_exib[:5]}-{cep_exib[5:]}"
 
-                # Dados da carteira também
-                fone_cart = ""
-                email_cart = ""
-                if cart_row:
-                    fone_cart = " · ".join([safe_str(cart_row.get(f,""),"") for f in ["Telefone Residencial","Telefone Comercial","Celular"] if safe_str(cart_row.get(f,""),"") not in ["","—"]])
-                    email_cart = safe_str(cart_row.get("E-mail",""))
+            # Dados da carteira também
+            fone_cart = ""
+            email_cart = ""
+            if cart_row:
+                fone_cart = " · ".join([safe_str(cart_row.get(f,""),"") for f in ["Telefone Residencial","Telefone Comercial","Celular"] if safe_str(cart_row.get(f,""),"") not in ["","—"]])
+                email_cart = safe_str(cart_row.get("E-mail",""))
 
-                # Última compra — data e modelo do emplacamento mais recente
-                ultima_data_raw = esrt["Data emplacamento"].iloc[0] if not esrt.empty else None
-                ultima_data_fmt = pd.to_datetime(ultima_data_raw, errors="coerce")
-                ultima_data_str = ultima_data_fmt.strftime("%d/%m/%Y") if pd.notna(ultima_data_fmt) else "—"
-                ultimo_modelo   = safe_str(esrt["Modelo"].iloc[0]) if not esrt.empty else "—"
-                ultima_conc     = safe_str(esrt["Concessionário"].iloc[0]) if not esrt.empty else "—"
-                foi_nigris      = "✅ Comercial De Nigris" if is_denigris(pd.Series([ultima_conc])).iloc[0] else f"⚠️ {ultima_conc[:40]}"
+            # Última compra — data e modelo do emplacamento mais recente
+            ultima_data_raw = esrt["Data emplacamento"].iloc[0] if not esrt.empty else None
+            ultima_data_fmt = pd.to_datetime(ultima_data_raw, errors="coerce")
+            ultima_data_str = ultima_data_fmt.strftime("%d/%m/%Y") if pd.notna(ultima_data_fmt) else "—"
+            ultimo_modelo   = safe_str(esrt["Modelo"].iloc[0]) if not esrt.empty else "—"
+            ultima_conc     = safe_str(esrt["Concessionário"].iloc[0]) if not esrt.empty else "—"
+            foi_nigris      = "✅ Comercial De Nigris" if is_denigris(pd.Series([ultima_conc])).iloc[0] else f"⚠️ {ultima_conc[:40]}"
 
-                infos = [
-                    ("Razão Social",    safe_str(last.get("NOMEPROPRIETARIO",""))),
-                    ("Nome Fantasia",   safe_str(last.get("NOME_FANTASIA",""))),
-                    ("CNPJ / CPF",      safe_str(last.get("CPFCNPJPROPRIETARIO",""))),
-                    ("📅 Últ. Compra",  ultima_data_str),
-                    ("🚚 Últ. Modelo",  ultimo_modelo),
-                    ("🏢 Últ. Concessionária", foi_nigris),
-                    ("Endereço",        endereco),
-                    ("Cidade / UF",     cidade_uf),
-                    ("CEP",             cep_exib or "—"),
-                    ("Atividade",       safe_atividade(last)),
-                    ("Nat. Jurídica",   safe_str(last.get("NATUREZA_JURIDICA",""))),
-                    ("Situação",        safe_str(last.get("SITUACAO_RECEITA",""))),
-                    ("Abertura",        safe_str(last.get("DT_ABERTURA",""))),
+            infos = [
+                ("Razão Social",    safe_str(last.get("NOMEPROPRIETARIO",""))),
+                ("Nome Fantasia",   safe_str(last.get("NOME_FANTASIA",""))),
+                ("CNPJ / CPF",      safe_str(last.get("CPFCNPJPROPRIETARIO",""))),
+                ("📅 Últ. Compra",  ultima_data_str),
+                ("🚚 Últ. Modelo",  ultimo_modelo),
+                ("🏢 Últ. Concessionária", foi_nigris),
+                ("Endereço",        endereco),
+                ("Cidade / UF",     cidade_uf),
+                ("CEP",             cep_exib or "—"),
+                ("Atividade",       safe_atividade(last)),
+                ("Nat. Jurídica",   safe_str(last.get("NATUREZA_JURIDICA",""))),
+                ("Situação",        safe_str(last.get("SITUACAO_RECEITA",""))),
+                ("Abertura",        safe_str(last.get("DT_ABERTURA",""))),
+            ]
+            if cart_row:
+                infos += [
+                    ("Segmento",      safe_str(cart_row.get("Segmento principal do cliente",""))),
+                    ("Classificação", cls_raw),
+                    ("Vendedor",      safe_str(cart_row.get("VENDEDOR",""))),
                 ]
-                if cart_row:
-                    infos += [
-                        ("Segmento",      safe_str(cart_row.get("Segmento principal do cliente",""))),
-                        ("Classificação", cls_raw),
-                        ("Vendedor",      safe_str(cart_row.get("VENDEDOR",""))),
-                    ]
 
-                # Montar endereço completo para links de mapa
-                end_completo = " ".join(filter(None, [
-                    endereco if endereco != "—" else "",
-                    cidade_uf.replace(" - —","").replace("—","").strip() if cidade_uf != "—" else "",
-                    cep_exib if cep_exib else ""
-                ])).strip()
-                import urllib.parse as _urlp
-                _addr_enc = _urlp.quote(end_completo)
-                _gmaps_url = f"https://www.google.com/maps/search/?api=1&query={_addr_enc}"
-                _waze_url  = f"https://waze.com/ul?q={_addr_enc}"
+            # Montar endereço completo para links de mapa
+            end_completo = " ".join(filter(None, [
+                endereco if endereco != "—" else "",
+                cidade_uf.replace(" - —","").replace("—","").strip() if cidade_uf != "—" else "",
+                cep_exib if cep_exib else ""
+            ])).strip()
+            import urllib.parse as _urlp
+            _addr_enc = _urlp.quote(end_completo)
+            _gmaps_url = f"https://www.google.com/maps/search/?api=1&query={_addr_enc}"
+            _waze_url  = f"https://waze.com/ul?q={_addr_enc}"
 
-                st.markdown('<div class="info-card">', unsafe_allow_html=True)
-                for lbl, val in infos:
-                    if val and val != "—":
-                        if lbl in ("Endereço", "Cidade / UF") and end_completo:
-                            nav_html = (
-                                f'<div style="display:flex;align-items:center;gap:8px;">' +
-                                f'<span>{val}</span>' +
-                                f'<a href="{_gmaps_url}" target="_blank" title="Abrir no Google Maps" ' +
-                                f'style="display:inline-flex;align-items:center;gap:3px;background:#e8f0ff;' +
-                                f'color:#1a73e8;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;' +
-                                f'text-decoration:none;white-space:nowrap;">🗺️ Maps</a>' +
-                                f'<a href="{_waze_url}" target="_blank" title="Abrir no Waze" ' +
-                                f'style="display:inline-flex;align-items:center;gap:3px;background:#f0eaff;' +
-                                f'color:#7c3aed;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;' +
-                                f'text-decoration:none;white-space:nowrap;">🚗 Waze</a>' +
-                                f'</div>'
-                            )
-                            st.markdown(f'<div class="info-row"><div class="info-label">{lbl}</div><div class="info-value">{nav_html}</div></div>', unsafe_allow_html=True)
-                        else:
-                            st.markdown(f'<div class="info-row"><div class="info-label">{lbl}</div><div class="info-value">{val}</div></div>', unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown('<div class="info-card">', unsafe_allow_html=True)
+            for lbl, val in infos:
+                if val and val != "—":
+                    if lbl in ("Endereço", "Cidade / UF") and end_completo:
+                        nav_html = (
+                            f'<div style="display:flex;align-items:center;gap:8px;">' +
+                            f'<span>{val}</span>' +
+                            f'<a href="{_gmaps_url}" target="_blank" title="Abrir no Google Maps" ' +
+                            f'style="display:inline-flex;align-items:center;gap:3px;background:#e8f0ff;' +
+                            f'color:#1a73e8;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;' +
+                            f'text-decoration:none;white-space:nowrap;">🗺️ Maps</a>' +
+                            f'<a href="{_waze_url}" target="_blank" title="Abrir no Waze" ' +
+                            f'style="display:inline-flex;align-items:center;gap:3px;background:#f0eaff;' +
+                            f'color:#7c3aed;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;' +
+                            f'text-decoration:none;white-space:nowrap;">🚗 Waze</a>' +
+                            f'</div>'
+                        )
+                        st.markdown(f'<div class="info-row"><div class="info-label">{lbl}</div><div class="info-value">{nav_html}</div></div>', unsafe_allow_html=True)
+                    else:
+                        st.markdown(f'<div class="info-row"><div class="info-label">{lbl}</div><div class="info-value">{val}</div></div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
 
-            with tab_contatos:
-                st.markdown('<div class="sec-title">📞 Contatos Disponíveis</div>', unsafe_allow_html=True)
+        with tab_contatos:
+            st.markdown('<div class="sec-title">📞 Contatos Disponíveis</div>', unsafe_allow_html=True)
 
-                # Coletar todos os contatos (emplacamento + carteira)
-                phones = []
-                msg_wa = "Olá! Entro em contato da Comercial De Nigris para apresentar nossas soluções em caminhões."
+            # Coletar todos os contatos (emplacamento + carteira)
+            phones = []
+            msg_wa = "Olá! Entro em contato da Comercial De Nigris para apresentar nossas soluções em caminhões."
 
-                # Emplacamento
-                for i in range(1,6):
-                    t = format_tel(last.get(f"DDD{i}"), last.get(f"TELEFONE{i}"))
-                    n = make_fone_num(last.get(f"DDD{i}"), last.get(f"TELEFONE{i}"))
-                    if t: phones.append(("fixo", t, n, "Emplacamento"))
-                for i in range(1,4):
-                    t = format_tel(last.get(f"DDD_CELULAR{i}"), last.get(f"CELULAR{i}"))
-                    n = make_fone_num(last.get(f"DDD_CELULAR{i}"), last.get(f"CELULAR{i}"))
-                    if t: phones.append(("cel", t, n, "Emplacamento"))
-                email_emp = safe_str(last.get("EMAIL",""))
+            # Emplacamento
+            for i in range(1,6):
+                t = format_tel(last.get(f"DDD{i}"), last.get(f"TELEFONE{i}"))
+                n = make_fone_num(last.get(f"DDD{i}"), last.get(f"TELEFONE{i}"))
+                if t: phones.append(("fixo", t, n, "Emplacamento"))
+            for i in range(1,4):
+                t = format_tel(last.get(f"DDD_CELULAR{i}"), last.get(f"CELULAR{i}"))
+                n = make_fone_num(last.get(f"DDD_CELULAR{i}"), last.get(f"CELULAR{i}"))
+                if t: phones.append(("cel", t, n, "Emplacamento"))
+            email_emp = safe_str(last.get("EMAIL",""))
 
-                # Carteira
-                if cart_row:
-                    for campo in ["Telefone Residencial","Telefone Comercial"]:
-                        v = safe_str(cart_row.get(campo,""))
-                        if v and v != "—":
-                            n = "55" + re.sub(r"\D","",v)
-                            phones.append(("fixo", v, n, "Carteira"))
-                    cel_c = safe_str(cart_row.get("Celular",""))
-                    if cel_c and cel_c != "—":
-                        n = "55" + re.sub(r"\D","",cel_c)
-                        phones.append(("cel", cel_c, n, "Carteira"))
-                    if email_cart and email_cart != "—":
-                        st.markdown(f"""
-                        <a href="mailto:{email_cart}?subject=Proposta Comercial - Comercial De Nigris&body={msg_wa}" class="contact-btn btn-email" style="display:flex;flex-direction:row;align-items:center;gap:10px;padding:12px 16px;border-radius:14px;margin-bottom:10px;">
-                            <span style="font-size:22px;">✉️</span>
-                            <div><div style="font-weight:700;font-size:13px;">{email_cart}</div><div style="font-size:10px;color:#8a95b0;">E-mail · Carteira</div></div>
-                        </a>""", unsafe_allow_html=True)
-                if email_emp and email_emp != "—" and email_emp != email_cart:
+            # Carteira
+            if cart_row:
+                for campo in ["Telefone Residencial","Telefone Comercial"]:
+                    v = safe_str(cart_row.get(campo,""))
+                    if v and v != "—":
+                        n = "55" + re.sub(r"\D","",v)
+                        phones.append(("fixo", v, n, "Carteira"))
+                cel_c = safe_str(cart_row.get("Celular",""))
+                if cel_c and cel_c != "—":
+                    n = "55" + re.sub(r"\D","",cel_c)
+                    phones.append(("cel", cel_c, n, "Carteira"))
+                if email_cart and email_cart != "—":
                     st.markdown(f"""
-                    <a href="mailto:{email_emp}?subject=Proposta Comercial - Comercial De Nigris&body={msg_wa}" class="contact-btn btn-email" style="display:flex;flex-direction:row;align-items:center;gap:10px;padding:12px 16px;border-radius:14px;margin-bottom:10px;">
+                    <a href="mailto:{email_cart}?subject=Proposta Comercial - Comercial De Nigris&body={msg_wa}" class="contact-btn btn-email" style="display:flex;flex-direction:row;align-items:center;gap:10px;padding:12px 16px;border-radius:14px;margin-bottom:10px;">
                         <span style="font-size:22px;">✉️</span>
-                        <div><div style="font-weight:700;font-size:13px;">{email_emp}</div><div style="font-size:10px;color:#8a95b0;">E-mail · Emplacamento</div></div>
+                        <div><div style="font-weight:700;font-size:13px;">{email_cart}</div><div style="font-size:10px;color:#8a95b0;">E-mail · Carteira</div></div>
+                    </a>""", unsafe_allow_html=True)
+            if email_emp and email_emp != "—" and email_emp != email_cart:
+                st.markdown(f"""
+                <a href="mailto:{email_emp}?subject=Proposta Comercial - Comercial De Nigris&body={msg_wa}" class="contact-btn btn-email" style="display:flex;flex-direction:row;align-items:center;gap:10px;padding:12px 16px;border-radius:14px;margin-bottom:10px;">
+                    <span style="font-size:22px;">✉️</span>
+                    <div><div style="font-weight:700;font-size:13px;">{email_emp}</div><div style="font-size:10px;color:#8a95b0;">E-mail · Emplacamento</div></div>
+                </a>""", unsafe_allow_html=True)
+
+            # Botões de telefone/WhatsApp
+            seen = set()
+            for tipo, fmt, num, fonte in phones:
+                if fmt in seen: continue
+                seen.add(fmt)
+                wa_url = f"https://wa.me/{num}?text={msg_wa}"
+                tel_url = f"tel:+{num}"
+                icon = "📱" if tipo == "cel" else "📞"
+                if tipo == "cel":
+                    st.markdown(f"""
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                        <a href="{wa_url}" target="_blank" class="contact-btn btn-whatsapp" style="display:flex;flex-direction:row;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;">
+                            <span style="font-size:20px;">💬</span>
+                            <div><div style="font-weight:700;font-size:12px;">{fmt}</div><div style="font-size:10px;">WhatsApp · {fonte}</div></div>
+                        </a>
+                        <a href="{tel_url}" class="contact-btn btn-phone" style="display:flex;flex-direction:row;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;">
+                            <span style="font-size:20px;">📞</span>
+                            <div><div style="font-weight:700;font-size:12px;">{fmt}</div><div style="font-size:10px;">Ligar · {fonte}</div></div>
+                        </a>
+                    </div>""", unsafe_allow_html=True)
+                else:
+                    st.markdown(f"""
+                    <a href="{tel_url}" class="contact-btn btn-phone" style="display:flex;flex-direction:row;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;margin-bottom:8px;">
+                        <span style="font-size:20px;">📞</span>
+                        <div><div style="font-weight:700;font-size:12px;">{fmt}</div><div style="font-size:10px;">Telefone fixo · {fonte}</div></div>
                     </a>""", unsafe_allow_html=True)
 
-                # Botões de telefone/WhatsApp
-                seen = set()
-                for tipo, fmt, num, fonte in phones:
-                    if fmt in seen: continue
-                    seen.add(fmt)
-                    wa_url = f"https://wa.me/{num}?text={msg_wa}"
-                    tel_url = f"tel:+{num}"
-                    icon = "📱" if tipo == "cel" else "📞"
-                    if tipo == "cel":
-                        st.markdown(f"""
-                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
-                            <a href="{wa_url}" target="_blank" class="contact-btn btn-whatsapp" style="display:flex;flex-direction:row;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;">
-                                <span style="font-size:20px;">💬</span>
-                                <div><div style="font-weight:700;font-size:12px;">{fmt}</div><div style="font-size:10px;">WhatsApp · {fonte}</div></div>
-                            </a>
-                            <a href="{tel_url}" class="contact-btn btn-phone" style="display:flex;flex-direction:row;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;">
-                                <span style="font-size:20px;">📞</span>
-                                <div><div style="font-weight:700;font-size:12px;">{fmt}</div><div style="font-size:10px;">Ligar · {fonte}</div></div>
-                            </a>
-                        </div>""", unsafe_allow_html=True)
-                    else:
-                        st.markdown(f"""
-                        <a href="{tel_url}" class="contact-btn btn-phone" style="display:flex;flex-direction:row;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;margin-bottom:8px;">
-                            <span style="font-size:20px;">📞</span>
-                            <div><div style="font-weight:700;font-size:12px;">{fmt}</div><div style="font-size:10px;">Telefone fixo · {fonte}</div></div>
-                        </a>""", unsafe_allow_html=True)
+            if not phones and email_emp == "—" and email_cart == "—":
+                st.info("Nenhum contato disponível para este cliente.")
 
-                if not phones and email_emp == "—" and email_cart == "—":
-                    st.info("Nenhum contato disponível para este cliente.")
+            # Preferências de compra
+            st.markdown('<div class="sec-title">🏷️ Preferências de Compra</div>', unsafe_allow_html=True)
+            marcas  = get_modes(edf["Marca"],  top=3)
+            modelos = get_modes(edf["Modelo"], top=3)
+            concs   = get_modes(edf["Concessionário"], top=2)
+            st.markdown('<div class="info-card">', unsafe_allow_html=True)
+            for m in marcas:
+                cnt = len(edf[edf["Marca"]==m])
+                st.markdown(f'<div class="info-row"><div class="info-label">Marca</div><div class="info-value"><strong>{m}</strong> <span style="color:#8a95b0;">({cnt}x)</span></div></div>', unsafe_allow_html=True)
+            for mod in modelos:
+                cnt = len(edf[edf["Modelo"]==mod])
+                st.markdown(f'<div class="info-row"><div class="info-label">Modelo</div><div class="info-value">{mod} <span style="color:#8a95b0;">({cnt}x)</span></div></div>', unsafe_allow_html=True)
+            for conc in concs:
+                icon = "✅" if any(n in conc.upper() for n in NOMES_DENIGRIS) else "⚠️"
+                st.markdown(f'<div class="info-row"><div class="info-label">Concessionária</div><div class="info-value">{icon} {conc[:50]}</div></div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
 
-                # Preferências de compra
-                st.markdown('<div class="sec-title">🏷️ Preferências de Compra</div>', unsafe_allow_html=True)
-                marcas  = get_modes(edf["Marca"],  top=3)
-                modelos = get_modes(edf["Modelo"], top=3)
-                concs   = get_modes(edf["Concessionário"], top=2)
-                st.markdown('<div class="info-card">', unsafe_allow_html=True)
-                for m in marcas:
-                    cnt = len(edf[edf["Marca"]==m])
-                    st.markdown(f'<div class="info-row"><div class="info-label">Marca</div><div class="info-value"><strong>{m}</strong> <span style="color:#8a95b0;">({cnt}x)</span></div></div>', unsafe_allow_html=True)
-                for mod in modelos:
-                    cnt = len(edf[edf["Modelo"]==mod])
-                    st.markdown(f'<div class="info-row"><div class="info-label">Modelo</div><div class="info-value">{mod} <span style="color:#8a95b0;">({cnt}x)</span></div></div>', unsafe_allow_html=True)
-                for conc in concs:
-                    icon = "✅" if any(n in conc.upper() for n in NOMES_DENIGRIS) else "⚠️"
-                    st.markdown(f'<div class="info-row"><div class="info-label">Concessionária</div><div class="info-value">{icon} {conc[:50]}</div></div>', unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)
+        with tab_socios:
+            socios = []
+            for i in range(1,4):
+                ns = safe_str(last.get(f"NOME_SOCIO_DIRETOR{i}",""), "")
+                if ns and ns != "—":
+                    cel_s  = format_tel(last.get(f"DDD1_CEL_SOCIO{i}"), last.get(f"TEL1_CEL_SOCIO{i}"))
+                    cel_n  = make_fone_num(last.get(f"DDD1_CEL_SOCIO{i}"), last.get(f"TEL1_CEL_SOCIO{i}"))
+                    email_s= safe_str(last.get(f"EMAIL_SOCIO{i}",""))
+                    cargo_s= safe_str(last.get(f"CARGO{i}",""))
+                    socios.append({"nome":ns,"cargo":cargo_s,"email":email_s,"cel":cel_s,"cel_n":cel_n})
+            if socios:
+                for s in socios:
+                    btns = ""
+                    if s["cel"] and s["cel"] != "—":
+                        msg_s = "Olá! Entro em contato da Comercial De Nigris."
+                        btns += f'<a href="https://wa.me/{s["cel_n"]}?text={msg_s}" target="_blank" class="contact-btn btn-whatsapp" style="font-size:11px;padding:6px 12px;border-radius:10px;margin-right:6px;">💬 {s["cel"]}</a>'
+                        btns += f'<a href="tel:+{s["cel_n"]}" class="contact-btn btn-phone" style="font-size:11px;padding:6px 12px;border-radius:10px;margin-right:6px;">📞 Ligar</a>'
+                    if s["email"] != "—":
+                        btns += f'<a href="mailto:{s["email"]}" class="contact-btn btn-email" style="font-size:11px;padding:6px 12px;border-radius:10px;">✉️ E-mail</a>'
+                    st.markdown(f"""
+                    <div class="socio-card">
+                        <div class="socio-name">{s['nome']}</div>
+                        <div class="socio-role">{s['cargo']}</div>
+                        <div style="font-size:12px;color:#6b7a99;margin-top:6px;">{s['email']}</div>
+                        <div style="margin-top:10px;">{btns}</div>
+                    </div>""", unsafe_allow_html=True)
+            else:
+                st.info("Dados societários não disponíveis.")
 
-            with tab_socios:
-                socios = []
-                for i in range(1,4):
-                    ns = safe_str(last.get(f"NOME_SOCIO_DIRETOR{i}",""), "")
-                    if ns and ns != "—":
-                        cel_s  = format_tel(last.get(f"DDD1_CEL_SOCIO{i}"), last.get(f"TEL1_CEL_SOCIO{i}"))
-                        cel_n  = make_fone_num(last.get(f"DDD1_CEL_SOCIO{i}"), last.get(f"TEL1_CEL_SOCIO{i}"))
-                        email_s= safe_str(last.get(f"EMAIL_SOCIO{i}",""))
-                        cargo_s= safe_str(last.get(f"CARGO{i}",""))
-                        socios.append({"nome":ns,"cargo":cargo_s,"email":email_s,"cel":cel_s,"cel_n":cel_n})
-                if socios:
-                    for s in socios:
-                        btns = ""
-                        if s["cel"] and s["cel"] != "—":
-                            msg_s = "Olá! Entro em contato da Comercial De Nigris."
-                            btns += f'<a href="https://wa.me/{s["cel_n"]}?text={msg_s}" target="_blank" class="contact-btn btn-whatsapp" style="font-size:11px;padding:6px 12px;border-radius:10px;margin-right:6px;">💬 {s["cel"]}</a>'
-                            btns += f'<a href="tel:+{s["cel_n"]}" class="contact-btn btn-phone" style="font-size:11px;padding:6px 12px;border-radius:10px;margin-right:6px;">📞 Ligar</a>'
-                        if s["email"] != "—":
-                            btns += f'<a href="mailto:{s["email"]}" class="contact-btn btn-email" style="font-size:11px;padding:6px 12px;border-radius:10px;">✉️ E-mail</a>'
-                        st.markdown(f"""
-                        <div class="socio-card">
-                            <div class="socio-name">{s['nome']}</div>
-                            <div class="socio-role">{s['cargo']}</div>
-                            <div style="font-size:12px;color:#6b7a99;margin-top:6px;">{s['email']}</div>
-                            <div style="margin-top:10px;">{btns}</div>
-                        </div>""", unsafe_allow_html=True)
-                else:
-                    st.info("Dados societários não disponíveis.")
+        with tab_hist:
+            # ── KPIs resumo ──
+            total_h = len(edf)
+            nigris_h = int(is_denigris(edf["Concessionário"]).sum())
+            conc_h   = total_h - nigris_h
+            anos_atv = edf["Ano"].nunique()
+            h1, h2, h3, h4 = st.columns(4)
+            h1.metric("Total", total_h)
+            h2.metric("De Nigris", nigris_h)
+            h3.metric("Concorrência", conc_h)
+            h4.metric("Anos ativo", anos_atv)
 
-            with tab_hist:
-                # ── KPIs resumo ──
-                total_h = len(edf)
-                nigris_h = int(is_denigris(edf["Concessionário"]).sum())
-                conc_h   = total_h - nigris_h
-                anos_atv = edf["Ano"].nunique()
-                h1, h2, h3, h4 = st.columns(4)
-                h1.metric("Total", total_h)
-                h2.metric("De Nigris", nigris_h)
-                h3.metric("Concorrência", conc_h)
-                h4.metric("Anos ativo", anos_atv)
+            # ── Gráfico por ano ──
+            hist = edf.groupby("Ano").size().reset_index(name="Qtd")
+            hist["Ano"] = hist["Ano"].astype(str)
+            cores = ["#c8a84b" if str(a)==str(hist["Ano"].max()) else "#0a1628" for a in hist["Ano"]]
+            fig = go.Figure(go.Bar(
+                x=hist["Ano"], y=hist["Qtd"],
+                marker_color=cores,
+                marker_line_color="#c8a84b", marker_line_width=1.5,
+                text=hist["Qtd"], textposition="outside"
+            ))
+            fig.update_layout(
+                plot_bgcolor="#fff", paper_bgcolor="#fff", font_color="#4a5568",
+                height=220, margin=dict(t=30,b=10,l=10,r=10),
+                xaxis=dict(showgrid=False, title=""),
+                yaxis=dict(showgrid=True, gridcolor="#f0f2f7", title="Qtd"),
+                title=dict(text="Emplacamentos por Ano", font=dict(size=13, color="#0a1628"), x=0)
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
-                # ── Gráfico por ano ──
-                hist = edf.groupby("Ano").size().reset_index(name="Qtd")
-                hist["Ano"] = hist["Ano"].astype(str)
-                cores = ["#c8a84b" if str(a)==str(hist["Ano"].max()) else "#0a1628" for a in hist["Ano"]]
-                fig = go.Figure(go.Bar(
-                    x=hist["Ano"], y=hist["Qtd"],
-                    marker_color=cores,
-                    marker_line_color="#c8a84b", marker_line_width=1.5,
-                    text=hist["Qtd"], textposition="outside"
-                ))
-                fig.update_layout(
-                    plot_bgcolor="#fff", paper_bgcolor="#fff", font_color="#4a5568",
-                    height=220, margin=dict(t=30,b=10,l=10,r=10),
-                    xaxis=dict(showgrid=False, title=""),
-                    yaxis=dict(showgrid=True, gridcolor="#f0f2f7", title="Qtd"),
-                    title=dict(text="Emplacamentos por Ano", font=dict(size=13, color="#0a1628"), x=0)
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-                # ── Tabela completa ──
-                st.markdown(f'<div class="sec-title">📋 Histórico Completo ({total_h} registros)</div>', unsafe_allow_html=True)
-                # Selecionar só colunas que existem na base
-                cols_hist = [c for c in ["Data emplacamento","Placa","Modelo","Marca","Concessionário","NO_CIDADE"] if c in esrt.columns]
-                det = esrt[cols_hist].copy()
-                det["Data emplacamento"] = pd.to_datetime(det["Data emplacamento"], errors="coerce").dt.strftime("%d/%m/%Y")
-                det["De Nigris"] = is_denigris(esrt["Concessionário"]).apply(lambda x: "✅" if x else "—")
-                rename_map = {"Data emplacamento":"Data","Concessionário":"Concessionária","NO_CIDADE":"Cidade"}
-                det = det.rename(columns={k:v for k,v in rename_map.items() if k in det.columns})
-                st.dataframe(det, use_container_width=True, hide_index=True)
+            # ── Tabela completa ──
+            st.markdown(f'<div class="sec-title">📋 Histórico Completo ({total_h} registros)</div>', unsafe_allow_html=True)
+            # Selecionar só colunas que existem na base
+            cols_hist = [c for c in ["Data emplacamento","Placa","Modelo","Marca","Concessionário","NO_CIDADE"] if c in esrt.columns]
+            det = esrt[cols_hist].copy()
+            det["Data emplacamento"] = pd.to_datetime(det["Data emplacamento"], errors="coerce").dt.strftime("%d/%m/%Y")
+            det["De Nigris"] = is_denigris(esrt["Concessionário"]).apply(lambda x: "✅" if x else "—")
+            rename_map = {"Data emplacamento":"Data","Concessionário":"Concessionária","NO_CIDADE":"Cidade"}
+            det = det.rename(columns={k:v for k,v in rename_map.items() if k in det.columns})
+            st.dataframe(det, use_container_width=True, hide_index=True)
 
     elif buscar and not q:
         st.warning("Digite algo para buscar.")
