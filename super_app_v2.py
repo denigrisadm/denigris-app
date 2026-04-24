@@ -1263,36 +1263,31 @@ if pagina == "busca":
         q_cnpj  = re.sub(r"\D", "", q_strip)
         q_placa = q_strip.replace("-","").replace(" ","").upper()
 
-        # ── Detectar se é busca por placa (7 chars alfanuméricos, padrão BR) ──
-        import re as _re
-        _is_placa = bool(_re.match(r"^[A-Z]{3}\d[A-Z0-9]\d{2}$", q_placa) or
-                         _re.match(r"^[A-Z]{3}\d{4}$", q_placa) or
-                         (len(q_placa) >= 5 and q_placa.isalnum()))
+        # ── Detectar busca por placa: sem espaço, só alfanumérico, 5-8 chars ──
+        _is_placa = (len(q_placa) >= 5 and len(q_placa) <= 8 and
+                     q_placa.isalnum() and " " not in q_placa)
 
-        linha_placa = None  # linha exata do veículo buscado por placa
+        linha_placa = None
 
-        if _is_placa and len(q_placa) >= 5:
-            # Busca exata na coluna Placa (coluna G)
+        if _is_placa:
             match_placa = df_emp[df_emp["Placa_norm"] == q_placa]
             if match_placa.empty:
                 match_placa = df_emp[df_emp["Placa_norm"].str.contains(q_placa, na=False, regex=False)]
             if not match_placa.empty:
-                # Pegar a linha mais recente da placa
                 linha_placa = match_placa.sort_values("Data emplacamento", ascending=False).iloc[0].to_dict()
                 cnpj_sel = linha_placa["CNPJ_NORM"]
-                # Histórico completo do dono
                 edf = df_emp[df_emp["CNPJ_NORM"] == cnpj_sel].copy()
                 esrt = edf.sort_values("Data emplacamento", ascending=False)
-                # last = dados da linha da placa (não do último emplacamento do CNPJ)
                 last = linha_placa
                 total_emp = len(edf)
                 datas = edf["Data emplacamento"].dropna().tolist()
                 pred_label, pred_date = calc_prediction(datas)
                 nigris_cnt = int(is_denigris(edf["Concessionário"]).sum())
             else:
-                st.warning(f"Placa **{q_placa}** não encontrada.")
-                st.stop()
-        else:
+                # Não achou por placa — tenta por nome
+                _is_placa = False
+        
+        if not _is_placa:
             # Busca por nome ou CNPJ
             tokens = [t for t in q_norm.split() if len(t) >= 2]
             nome_norm_series = norm_str_series(df_emp["NOMEPROPRIETARIO"])
@@ -1319,7 +1314,6 @@ if pagina == "busca":
             cnpjs = resultados["CNPJ_NORM"].unique()
             if len(cnpjs) == 0:
                 st.warning("Nenhum cliente encontrado.")
-                st.stop()
 
             if len(cnpjs) > 1:
                 opts = []
