@@ -1263,55 +1263,64 @@ if pagina == "busca":
         q_cnpj  = re.sub(r"\D", "", q_strip)
         q_placa = q_strip.replace("-","").replace(" ","").upper()
 
-        # Busca por tokens: cada palavra deve aparecer no nome (sem acento)
-        tokens = [t for t in q_norm.split() if len(t) >= 2]
-        nome_norm_series = norm_str_series(df_emp["NOMEPROPRIETARIO"])
-        if tokens:
-            mask_nome = pd.Series(True, index=df_emp.index)
-            for tok in tokens:
-                mask_nome = mask_nome & nome_norm_series.str.contains(tok, na=False, regex=False)
-        else:
-            mask_nome = pd.Series(False, index=df_emp.index)
+        # ── Detectar se é busca por placa (7 chars alfanuméricos, padrão BR) ──
+        import re as _re
+        _is_placa = bool(_re.match(r"^[A-Z]{3}\d[A-Z0-9]\d{2}$", q_placa) or
+                         _re.match(r"^[A-Z]{3}\d{4}$", q_placa) or
+                         (len(q_placa) >= 5 and q_placa.isalnum()))
 
-        if len(q_cnpj) >= 11:
-            mask_cnpj = df_emp["CNPJ_NORM"] == q_cnpj
-        elif len(q_cnpj) >= 3:
-            mask_cnpj = df_emp["CNPJ_NORM"].str.startswith(q_cnpj)
-        else:
-            mask_cnpj = pd.Series(False, index=df_emp.index)
+        linha_placa = None  # linha exata do veículo buscado por placa
 
-        mask_placa = df_emp["Placa_norm"].str.contains(q_placa, na=False, regex=False) if len(q_placa) >= 3 else pd.Series(False, index=df_emp.index)
-
-        # ── Busca por placa: exata primeiro, depois substring ──
-        # A placa é única — achamos o veículo e extraímos o dono (CNPJ)
-        if len(q_placa) >= 3:
-            # Exato primeiro
-            mask_placa_exata = df_emp["Placa_norm"] == q_placa
-            if mask_placa_exata.any():
-                mask_placa = mask_placa_exata
+        if _is_placa and len(q_placa) >= 5:
+            # Busca exata na coluna Placa (coluna G)
+            match_placa = df_emp[df_emp["Placa_norm"] == q_placa]
+            if match_placa.empty:
+                match_placa = df_emp[df_emp["Placa_norm"].str.contains(q_placa, na=False, regex=False)]
+            if not match_placa.empty:
+                # Pegar a linha mais recente da placa
+                linha_placa = match_placa.sort_values("Data emplacamento", ascending=False).iloc[0].to_dict()
+                cnpj_sel = linha_placa["CNPJ_NORM"]
+                # Histórico completo do dono
+                edf = df_emp[df_emp["CNPJ_NORM"] == cnpj_sel].copy()
+                esrt = edf.sort_values("Data emplacamento", ascending=False)
+                # last = dados da linha da placa (não do último emplacamento do CNPJ)
+                last = linha_placa
+                total_emp = len(edf)
+                datas = edf["Data emplacamento"].dropna().tolist()
+                pred_label, pred_date = calc_prediction(datas)
+                nigris_cnt = int(is_denigris(edf["Concessionário"]).sum())
             else:
-                mask_placa = df_emp["Placa_norm"].str.contains(q_placa, na=False, regex=False)
+                st.warning(f"Placa **{q_placa}** não encontrada.")
+                st.stop()
         else:
-            mask_placa = pd.Series(False, index=df_emp.index)
+            # Busca por nome ou CNPJ
+            tokens = [t for t in q_norm.split() if len(t) >= 2]
+            nome_norm_series = norm_str_series(df_emp["NOMEPROPRIETARIO"])
+            if tokens:
+                mask_nome = pd.Series(True, index=df_emp.index)
+                for tok in tokens:
+                    mask_nome = mask_nome & nome_norm_series.str.contains(tok, na=False, regex=False)
+            else:
+                mask_nome = pd.Series(False, index=df_emp.index)
 
-        # Se busca por placa achou resultado, usar só esse — não misturar com nome/cnpj
-        if mask_placa.any() and len(q_placa) >= 3 and not mask_nome.any() and not mask_cnpj.any():
-            resultados = df_emp[mask_placa].copy()
-            # Ordenar pelo mais recente para pegar o proprietário atual
-            resultados = resultados.sort_values("Data emplacamento", ascending=False)
-        else:
-            mask = mask_nome | mask_cnpj | mask_placa
-            resultados = df_emp[mask].copy()
+            if len(q_cnpj) >= 11:
+                mask_cnpj = df_emp["CNPJ_NORM"] == q_cnpj
+            elif len(q_cnpj) >= 3:
+                mask_cnpj = df_emp["CNPJ_NORM"].str.startswith(q_cnpj)
+            else:
+                mask_cnpj = pd.Series(False, index=df_emp.index)
+
+            resultados = df_emp[mask_nome | mask_cnpj].copy()
             if not resultados.empty and tokens:
                 _nome_s = norm_str_series(resultados["NOMEPROPRIETARIO"])
                 resultados["_score"] = sum(_nome_s.str.contains(tok, na=False, regex=False).astype(int) for tok in tokens)
                 resultados = resultados.sort_values("_score", ascending=False)
 
-        cnpjs = resultados["CNPJ_NORM"].unique()
+            cnpjs = resultados["CNPJ_NORM"].unique()
+            if len(cnpjs) == 0:
+                st.warning("Nenhum cliente encontrado.")
+                st.stop()
 
-        if len(cnpjs) == 0:
-            st.warning("Nenhum cliente encontrado.")
-        else:
             if len(cnpjs) > 1:
                 opts = []
                 for cn in cnpjs[:20]:
