@@ -318,6 +318,15 @@ def norm_str(s):
     s = ''.join(c for c in s if not unicodedata.combining(c))
     return re.sub(r'\s+', ' ', s)
 
+def norm_str_series(series):
+    """Vetorizado: normaliza toda uma Series de uma vez — 10-50x mais rapido que .apply(norm_str)."""
+    s = series.fillna('').astype(str).str.upper().str.strip()
+    s = s.apply(lambda x: unicodedata.normalize('NFKD', x))
+    s = s.str.encode('ascii', errors='ignore').str.decode('ascii')
+    return s.str.replace(r'\s+', ' ', regex=True).str.strip()
+
+
+
 def norm_cnpj(s):
     return re.sub(r"[.\-/]", "", str(s)).strip()
 
@@ -561,11 +570,11 @@ def load_area(src):
     # Limpar e normalizar
     df = df[df["Consultor"].astype(str).str.strip().str.upper() != "NAN"].copy()
     df = df[df["Consultor"].astype(str).str.strip() != ""].copy()
-    df["Consultor"]      = df["Consultor"].fillna("ZONA LIVRE").apply(norm_str)
-    df["Municipio_norm"] = df["Municipio"].apply(norm_str)
-    df["Bairro_norm"]    = df["Bairro"].apply(lambda x: norm_str(x) if pd.notna(x) else "")
-    df["CEP_ini_norm"]   = df["CEP_Inicial"].apply(norm_cep)
-    df["CEP_fim_norm"]   = df["CEP_Final"].apply(norm_cep)
+    df["Consultor"]      = norm_str_series(df["Consultor"].fillna("ZONA LIVRE"))
+    df["Municipio_norm"] = norm_str_series(df["Municipio"])
+    df["Bairro_norm"]    = norm_str_series(df["Bairro"].fillna(""))
+    df["CEP_ini_norm"]   = df["CEP_Inicial"].astype(str).str.replace(r"\D","",regex=True).str.zfill(8).str[:8]
+    df["CEP_fim_norm"]   = df["CEP_Final"].astype(str).str.replace(r"\D","",regex=True).str.zfill(8).str[:8]
 
     # ── Cidade_real: cidade que aparece em NO_CIDADE dos emplacamentos ──
     # Para SP Capital os municípios são bairros — cidade real é "SAO PAULO"
@@ -587,7 +596,7 @@ def load_carteira(src):
     df = pd.read_excel(src)
     df.columns = [c.strip() for c in df.columns]
     df["CPF/CNPJ"]  = df["CPF/CNPJ"].astype(str).str.strip()
-    df["CNPJ_NORM"] = df["CPF/CNPJ"].apply(norm_cnpj)
+    df["CNPJ_NORM"] = df["CPF/CNPJ"].astype(str).str.replace(r"\D","",regex=True)
     df["VENDEDOR"]  = df.get("VENDEDOR", pd.Series(dtype=str)).astype(str).str.strip()
     if "CEP" in df.columns:
         df["CEP_norm"] = df["CEP"].apply(norm_cep)
@@ -612,8 +621,8 @@ def load_emplacamentos(src, label=""):
         if col in df.columns:
             df[col] = df[col].astype(str).str.strip()
 
-    # CNPJ normalizado (só dígitos)
-    df["CNPJ_NORM"] = df["CPFCNPJPROPRIETARIO"].apply(norm_cnpj)
+    # CNPJ normalizado (só dígitos) — vetorizado
+    df["CNPJ_NORM"] = df["CPFCNPJPROPRIETARIO"].astype(str).str.replace(r"\D", "", regex=True)
 
     # Data — tenta dayfirst (dd/mm/yyyy) e mixed
     df["Data emplacamento"] = pd.to_datetime(
@@ -629,13 +638,13 @@ def load_emplacamentos(src, label=""):
     df["Mes"] = df["Data emplacamento"].dt.month
 
     df["Placa_norm"] = df["Placa"].str.replace("-","").str.replace(" ","").str.upper()
-    df["NO_CIDADE_NORM"] = df["NO_CIDADE"].apply(norm_str)
-    df["NO_BAIRRO_NORM"] = df["NO_BAIRRO"].apply(
-        lambda x: norm_str(x) if str(x) not in ["nan","None",""] else ""
-    )
+    df["NO_CIDADE_NORM"] = norm_str_series(df["NO_CIDADE"])
+    df["NO_BAIRRO_NORM"] = norm_str_series(df["NO_BAIRRO"].fillna(""))
 
     if "NU_CEP" in df.columns:
-        df["CEP_norm"] = df["NU_CEP"].apply(norm_cep)
+        df["CEP_norm"] = (df["NU_CEP"].astype(str)
+                          .str.replace(r"\D","",regex=True)
+                          .str.zfill(8).str[:8])
     else:
         df["CEP_norm"] = ""
 
@@ -1068,7 +1077,12 @@ def carregar_dados_se_necessario():
 
 df_area = st.session_state.df_area
 df_cart = st.session_state.df_cart
-df_emp  = merge_emp(st.session_state.df_emp_list) if st.session_state.df_emp_list else None
+# merge_emp cacheado no session_state — recalcula só quando lista muda
+_emp_list_len = len(st.session_state.df_emp_list)
+if st.session_state.df_emp_list and st.session_state.get("_emp_merged_len") != _emp_list_len:
+    st.session_state["_df_emp_merged"] = merge_emp(st.session_state.df_emp_list)
+    st.session_state["_emp_merged_len"] = _emp_list_len
+df_emp = st.session_state.get("_df_emp_merged") if st.session_state.df_emp_list else None
 
 # ════════════════════════════════════════════════════════════════
 # LOGIN
@@ -1109,7 +1123,7 @@ if st.session_state.user is None:
                 {logo_html}
             </div>
             <div style="font-size:11px;color:#8a95b0;text-transform:uppercase;
-                        letter-spacing:2px;margin-top:4px;margin-bottom:4px;">Inteligência Comercial - EMPLACAMENTOS CAMINHÕES</div>
+                        letter-spacing:2px;margin-top:4px;margin-bottom:4px;">Inteligência Comercial</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -1154,7 +1168,12 @@ cons_key  = u_data.get("consultor_key", u_key)
 carregar_dados_se_necessario()
 df_area = st.session_state.df_area
 df_cart = st.session_state.df_cart
-df_emp  = merge_emp(st.session_state.df_emp_list) if st.session_state.df_emp_list else None
+# merge_emp cacheado no session_state — recalcula só quando lista muda
+_emp_list_len = len(st.session_state.df_emp_list)
+if st.session_state.df_emp_list and st.session_state.get("_emp_merged_len") != _emp_list_len:
+    st.session_state["_df_emp_merged"] = merge_emp(st.session_state.df_emp_list)
+    st.session_state["_emp_merged_len"] = _emp_list_len
+df_emp = st.session_state.get("_df_emp_merged") if st.session_state.df_emp_list else None
 
 PAGINAS_GESTOR  = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun."),("admin","⚙️","Admin")]
 PAGINAS_GERENTE = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun.")]
@@ -1246,7 +1265,7 @@ if pagina == "busca":
 
         # Busca por tokens: cada palavra deve aparecer no nome (sem acento)
         tokens = [t for t in q_norm.split() if len(t) >= 2]
-        nome_norm_series = df_emp["NOMEPROPRIETARIO"].apply(norm_str)
+        nome_norm_series = norm_str_series(df_emp["NOMEPROPRIETARIO"])
         if tokens:
             mask_nome = pd.Series(True, index=df_emp.index)
             for tok in tokens:
@@ -1266,9 +1285,8 @@ if pagina == "busca":
         mask = mask_nome | mask_cnpj | mask_placa
         resultados = df_emp[mask].copy()
         if not resultados.empty and tokens:
-            resultados["_score"] = resultados["NOMEPROPRIETARIO"].apply(
-                lambda x: sum(tok in norm_str(str(x)) for tok in tokens)
-            )
+            _nome_s = norm_str_series(resultados["NOMEPROPRIETARIO"])
+            resultados["_score"] = sum(_nome_s.str.contains(tok, na=False, regex=False).astype(int) for tok in tokens)
             resultados = resultados.sort_values("_score", ascending=False)
         cnpjs = resultados["CNPJ_NORM"].unique()
 
@@ -1662,7 +1680,7 @@ elif pagina == "emplacamentos":
         todos_cnpjs_cart = set(df_cart["CNPJ_NORM"].dropna().unique())
         # CNPJ que estão na carteira de OUTRO vendedor (não do consultado)
         cnpjs_outros = set(
-            df_cart[df_cart["VENDEDOR"].apply(norm_str) != norm_str(sel_cons)]["CNPJ_NORM"].dropna().unique()
+            df_cart[norm_str_series(df_cart["VENDEDOR"]) != norm_str(sel_cons)]["CNPJ_NORM"].dropna().unique()
         ) if sel_cons != "Todos" else set()
     else:
         todos_cnpjs_cart = set()
@@ -1882,7 +1900,7 @@ elif pagina == "carteira":
     else:
         # vendedor vê sua carteira pelo nome
         # Normalizar dos dois lados para garantir match (remove acentos, espaços duplos)
-        cart_view = df_cart[df_cart["VENDEDOR"].apply(norm_str) == norm_str(cons_key)].copy()
+        cart_view = df_cart[norm_str_series(df_cart["VENDEDOR"]) == norm_str(cons_key)].copy()
         # Fallback: tentar match simples se normalizado não achou
         if cart_view.empty:
             cart_view = df_cart[df_cart["VENDEDOR"].str.upper().str.strip() == cons_key.upper().strip()].copy()
@@ -2429,11 +2447,11 @@ elif pagina == "oportunidades":
         df_opp_area = emp_da_area(df_emp, munic_m, cep_r_m)
         # Passo 2: adicionar clientes da carteira do vendedor que estão fora da área
         if df_cart is not None:
-            cnpjs_minha_cart = set(df_cart[df_cart["VENDEDOR"].apply(norm_str) == norm_str(cons_key)]["CNPJ_NORM"].dropna())
+            cnpjs_minha_cart = set(df_cart[norm_str_series(df_cart["VENDEDOR"]) == norm_str(cons_key)]["CNPJ_NORM"].dropna())
             emp_cart_extra = df_emp[df_emp["CNPJ_NORM"].isin(cnpjs_minha_cart) & ~df_emp.index.isin(df_opp_area.index)]
             df_opp = pd.concat([df_opp_area, emp_cart_extra], ignore_index=True)
             # Passo 3: remover clientes da carteira de OUTRO vendedor que não sejam da minha carteira
-            cnpjs_outros = set(df_cart[df_cart["VENDEDOR"].apply(norm_str) != norm_str(cons_key)]["CNPJ_NORM"].dropna())
+            cnpjs_outros = set(df_cart[norm_str_series(df_cart["VENDEDOR"]) != norm_str(cons_key)]["CNPJ_NORM"].dropna())
             conflito = cnpjs_outros - cnpjs_minha_cart
             df_opp = df_opp[~df_opp["CNPJ_NORM"].isin(conflito)].copy()
         else:
