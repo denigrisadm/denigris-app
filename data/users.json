@@ -96,5 +96,12 @@
     "nome": "ANA CARLA",
     "consultor_key": "ANA",
     "ultimo_acesso": "2026-04-24T14:29:04"
+  },
+  "MARIANA": {
+    "senha_hash": "2b4673952ce88b079d15911dda99cd132137bf9123b61963f8cd734c2b16f730",
+    "perfil": "gerente",
+    "nome": "MARIANA FARIA",
+    "consultor_key": "MARIANA",
+    "ultimo_acesso": null
   }
 }
