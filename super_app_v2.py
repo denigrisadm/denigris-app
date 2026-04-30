@@ -1254,8 +1254,42 @@ if pagina == "busca":
         st.warning("⚠️ Carregue os dados na aba Admin → Gerenciar Dados")
         st.stop()
 
-    q = st.text_input("", placeholder="Nome, CNPJ, CPF ou Placa...", label_visibility="collapsed")
+    q = st.text_input("", placeholder="Nome, CNPJ, CPF ou Placa...", label_visibility="collapsed",
+                     value=st.session_state.get("busca_q",""))
     buscar = st.button("Buscar Cliente", use_container_width=True)
+
+    # Persistir q no session_state para não perder ao clicar em botões internos
+    if buscar and q:
+        st.session_state["busca_q"] = q
+        st.session_state["busca_cnpj_sel"] = None  # reset
+        st.session_state["busca_linha_placa"] = None
+
+    # Usar q do session_state se não está buscando agora
+    if not q:
+        q = st.session_state.get("busca_q","")
+
+    _mostrar_resultado = False
+
+    # ── Restaurar busca anterior (quando clica em botão interno como Receita Federal) ──
+    if not buscar and st.session_state.get("busca_cnpj_sel"):
+        cnpj_sel    = st.session_state["busca_cnpj_sel"]
+        linha_placa = st.session_state.get("busca_linha_placa")
+        edf  = df_emp[df_emp["CNPJ_NORM"] == cnpj_sel].copy()
+        esrt = edf.sort_values("Data emplacamento", ascending=False)
+        last = linha_placa if linha_placa else (esrt.iloc[0].to_dict() if not edf.empty else {})
+        total_emp   = len(edf)
+        datas       = edf["Data emplacamento"].dropna().tolist()
+        pred_label, pred_date = calc_prediction(datas)
+        nigris_cnt  = int(is_denigris(edf["Concessionário"]).sum())
+        cart_row    = None
+        if df_cart is not None:
+            cr = df_cart[df_cart["CNPJ_NORM"] == cnpj_sel]
+            cart_row = cr.iloc[0].to_dict() if not cr.empty else None
+        cep_c    = norm_cep(last.get("NU_CEP",""))
+        cidade_c = norm_str(str(last.get("NO_CIDADE","")))
+        bairro_c = norm_str(str(last.get("NO_BAIRRO","")))
+        cons_resp = get_consultor(cep_c, cidade_c, bairro_c, df_area) if df_area is not None else "—"
+        _mostrar_resultado = True
 
     if buscar and q:
         q_strip = q.strip()
@@ -1328,6 +1362,8 @@ if pagina == "busca":
             else:
                 cnpj_sel = cnpjs[0]
 
+            st.session_state["busca_cnpj_sel"] = cnpj_sel
+            st.session_state["busca_linha_placa"] = None
             edf = df_emp[df_emp["CNPJ_NORM"] == cnpj_sel].copy()
             esrt = edf.sort_values("Data emplacamento", ascending=False)
             last = esrt.iloc[0].to_dict()
@@ -1335,7 +1371,9 @@ if pagina == "busca":
             datas = edf["Data emplacamento"].dropna().tolist()
             pred_label, pred_date = calc_prediction(datas)
             nigris_cnt = int(is_denigris(edf["Concessionário"]).sum())
+            _mostrar_resultado = True
 
+    if _mostrar_resultado:
         # Dados da carteira
         cart_row = None
         if df_cart is not None:
@@ -1827,6 +1865,8 @@ if pagina == "busca":
 
     elif buscar and not q:
         st.warning("Digite algo para buscar.")
+    elif not q and not st.session_state.get("busca_cnpj_sel"):
+        pass  # estado limpo — não mostrar nada
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PÁGINA: MEUS EMPLACAMENTOS (4 quadrantes)
