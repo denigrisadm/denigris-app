@@ -1385,7 +1385,7 @@ if pagina == "busca":
         """, unsafe_allow_html=True)
 
         # ── TABS ──
-        tab_cad, tab_contatos, tab_socios, tab_hist = st.tabs(["📋 Cadastro","📞 Contatos","🤝 Sócios","📈 Histórico"])
+        tab_cad, tab_contatos, tab_socios, tab_hist, tab_receita = st.tabs(["📋 Cadastro","📞 Contatos","🤝 Sócios","📈 Histórico","🏢 Receita Federal"])
 
         with tab_cad:
             # Endereço
@@ -1626,6 +1626,204 @@ if pagina == "busca":
             rename_map = {"Data emplacamento":"Data","Concessionário":"Concessionária","NO_CIDADE":"Cidade"}
             det = det.rename(columns={k:v for k,v in rename_map.items() if k in det.columns})
             st.dataframe(det, use_container_width=True, hide_index=True)
+
+        # ══════════════════════════════════════════════════════
+        # ABA RECEITA FEDERAL
+        # ══════════════════════════════════════════════════════
+        with tab_receita:
+            import urllib.request as _ur, urllib.error as _ue
+
+            cnpj_rf = re.sub(r"\D", "", str(cnpj_sel))
+            nome_rf = safe_str(last.get("NOMEPROPRIETARIO","—"))
+            cnpj_fmt = f"{cnpj_rf[:2]}.{cnpj_rf[2:5]}.{cnpj_rf[5:8]}/{cnpj_rf[8:12]}-{cnpj_rf[12:14]}" if len(cnpj_rf)==14 else cnpj_rf
+
+            def _consultar_cnpj(cnpj14):
+                """Consulta CNPJ.ws com fallback para BrasilAPI."""
+                for url in [
+                    f"https://publica.cnpj.ws/cnpj/{cnpj14}",
+                    f"https://brasilapi.com.br/api/cnpj/v1/{cnpj14}"
+                ]:
+                    try:
+                        req = _ur.Request(url, headers={"User-Agent":"Mozilla/5.0"})
+                        with _ur.urlopen(req, timeout=12) as r:
+                            return json.loads(r.read().decode()), ""
+                    except _ue.HTTPError as e:
+                        err = f"HTTP {e.code}"
+                    except Exception as e:
+                        err = str(e)
+                return None, err
+
+            def _parse_rf(d):
+                """Extrai campos normalizados do JSON (compatível cnpj.ws e brasilapi)."""
+                est = d.get("estabelecimento", d)
+                def sv(v, fb="—"):
+                    if isinstance(v,dict): return v.get("descricao") or v.get("nome") or fb
+                    return str(v).strip() if v and str(v).strip() not in ["None","nan",""] else fb
+                razao    = sv(d.get("razao_social"))
+                fantasia = sv(est.get("nome_fantasia") or d.get("nome_fantasia",""))
+                situacao = sv(est.get("situacao_cadastral") or d.get("situacao",""))
+                abertura = sv(est.get("data_inicio_atividade") or d.get("abertura",""))
+                capital  = sv(d.get("capital_social",""))
+                porte    = sv(d.get("porte",""))
+                nat_jur  = sv(d.get("natureza_juridica",""))
+                atv_raw  = est.get("atividade_principal") or d.get("atividade_principal",{})
+                if isinstance(atv_raw,dict):   atividade = f"{sv(atv_raw.get('subclasse',''))} — {sv(atv_raw.get('descricao',''))}"
+                elif isinstance(atv_raw,list) and atv_raw: atividade = atv_raw[0].get("text", atv_raw[0].get("descricao","—"))
+                else: atividade = "—"
+                end_rf   = " ".join(filter(None,[sv(est.get("tipo_logradouro","")),sv(est.get("logradouro","")),
+                                                  sv(est.get("numero","")),sv(est.get("complemento","")),
+                                                  sv(est.get("bairro",""))])).strip() or "—"
+                cidade_rf = sv(est.get("cidade",{}) or est.get("municipio",""))
+                uf_rf    = sv(est.get("estado",{}) or est.get("uf",""))
+                cep_rf   = sv(est.get("cep",""))
+                socios   = d.get("socios") or d.get("qsa") or est.get("socios",[]) or []
+                return dict(razao=razao,fantasia=fantasia,situacao=situacao,abertura=abertura,
+                            capital=capital,porte=porte,nat_jur=nat_jur,atividade=atividade,
+                            end_rf=end_rf,cidade_rf=cidade_rf,uf_rf=uf_rf,cep_rf=cep_rf,socios=socios)
+
+            # ── Botão consultar ──
+            col_btn_rf, col_info_rf = st.columns([2,3])
+            with col_btn_rf:
+                btn_rf = st.button("🔎 Consultar Receita Federal", use_container_width=True, key="btn_receita")
+            with col_info_rf:
+                st.markdown(f'<div style="padding:8px 12px;background:#f0f8ff;border-radius:8px;font-size:12px;color:#4a5568;">CNPJ: <strong>{cnpj_fmt}</strong> · {nome_rf}</div>', unsafe_allow_html=True)
+
+            if btn_rf:
+                if len(cnpj_rf) != 14:
+                    st.warning("CNPJ inválido para consulta.")
+                else:
+                    with st.spinner("Consultando Receita Federal..."):
+                        dados_rf, erro_rf = _consultar_cnpj(cnpj_rf)
+                    if dados_rf:
+                        st.session_state[f"rf_{cnpj_rf}"] = dados_rf
+                    else:
+                        st.error(f"Erro: {erro_rf}. Tente novamente em alguns instantes.")
+
+            dados_rf = st.session_state.get(f"rf_{cnpj_rf}")
+
+            if dados_rf:
+                p = _parse_rf(dados_rf)
+                cor_sit = "#1E7E34" if "ATIVA" in p["situacao"].upper() else "#C0392B"
+
+                # ── CARD PRINCIPAL ──
+                cap_fmt = f"R$ {float(p['capital']):,.2f}".replace(",","X").replace(".",",").replace("X",".") if p["capital"] not in ["—",""] else "—"
+                try: cap_fmt = f"R$ {float(str(p['capital']).replace(',','.').replace('.','',p['capital'].count('.')-1)):,.2f}".replace(",","X").replace(".",",").replace("X",".") if p["capital"] not in ["—",""] else "—"
+                except: cap_fmt = f"R$ {p['capital']}"
+
+                st.markdown(f"""
+                <div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:20px;margin-bottom:16px;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+                    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;">
+                        <div>
+                            <div style="font-size:15px;font-weight:700;color:#0a1628;">{p["razao"]}</div>
+                            {"<div style='font-size:12px;color:#8a95b0;margin-top:2px;'>"+p["fantasia"]+"</div>" if p["fantasia"] not in ["—",""] and p["fantasia"]!=p["razao"] else ""}
+                            <div style="font-size:11px;color:#8a95b0;margin-top:4px;font-family:monospace;">{cnpj_fmt}</div>
+                        </div>
+                        <div style="background:{cor_sit};color:#fff;padding:5px 14px;border-radius:20px;font-size:12px;font-weight:600;white-space:nowrap;">
+                            ● {p["situacao"]}
+                        </div>
+                    </div>
+                    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;font-size:12px;margin-bottom:12px;">
+                        <div style="background:#f8fafc;padding:10px;border-radius:8px;">
+                            <div style="color:#8a95b0;font-size:10px;margin-bottom:3px;">DATA DE ABERTURA</div>
+                            <div style="font-weight:600;color:#0a1628;">{p["abertura"]}</div>
+                        </div>
+                        <div style="background:#f8fafc;padding:10px;border-radius:8px;">
+                            <div style="color:#8a95b0;font-size:10px;margin-bottom:3px;">CAPITAL SOCIAL</div>
+                            <div style="font-weight:600;color:#0a1628;">{cap_fmt}</div>
+                        </div>
+                        <div style="background:#f8fafc;padding:10px;border-radius:8px;">
+                            <div style="color:#8a95b0;font-size:10px;margin-bottom:3px;">PORTE</div>
+                            <div style="font-weight:600;color:#0a1628;">{p["porte"]}</div>
+                        </div>
+                        <div style="background:#f8fafc;padding:10px;border-radius:8px;">
+                            <div style="color:#8a95b0;font-size:10px;margin-bottom:3px;">NATUREZA JURÍDICA</div>
+                            <div style="font-weight:600;color:#0a1628;">{p["nat_jur"]}</div>
+                        </div>
+                        <div style="background:#f8fafc;padding:10px;border-radius:8px;grid-column:span 2;">
+                            <div style="color:#8a95b0;font-size:10px;margin-bottom:3px;">ATIVIDADE PRINCIPAL</div>
+                            <div style="font-weight:600;color:#0a1628;">{p["atividade"][:80]}</div>
+                        </div>
+                    </div>
+                    <div style="background:#f8fafc;padding:10px;border-radius:8px;font-size:12px;">
+                        <span style="color:#8a95b0;font-size:10px;">ENDEREÇO</span><br>
+                        <strong>{p["end_rf"]}</strong>
+                        {"<br><span style='color:#8a95b0;'>"+p["cidade_rf"]+" — "+p["uf_rf"]+" · CEP "+p["cep_rf"]+"</span>" if p["cidade_rf"]!="—" else ""}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # ── QUADRO SOCIETÁRIO ──
+                st.markdown('<div class="sec-title">🤝 Quadro Societário</div>', unsafe_allow_html=True)
+                socios = p["socios"]
+                if socios:
+                    for i, s in enumerate(socios):
+                        nome_s  = s.get("nome") or s.get("nome_socio","—")
+                        qual_s  = s.get("qualificacao_socio",{}).get("descricao","") if isinstance(s.get("qualificacao_socio"),dict) else s.get("qual","Sócio")
+                        cpf_s   = s.get("cpf_representante_legal") or s.get("cnpj_cpf_do_socio","")
+                        desde_s = s.get("data_entrada_sociedade","—")
+                        pais_s  = s.get("pais",{}).get("nome","Brasil") if isinstance(s.get("pais"),dict) else "Brasil"
+                        cpf_show = cpf_s if cpf_s else "CPF não divulgado"
+
+                        col_s1, col_s2 = st.columns([3,1])
+                        with col_s1:
+                            st.markdown(f"""
+                            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-left:4px solid #c8a84b;
+                                        border-radius:8px;padding:12px 16px;margin-bottom:8px;">
+                                <div style="font-weight:700;font-size:13px;color:#0a1628;">👤 {nome_s}</div>
+                                <div style="font-size:11px;color:#8a95b0;margin-top:3px;">
+                                    {qual_s} · Desde {desde_s} · {pais_s}
+                                </div>
+                                <div style="font-size:11px;color:#4a5568;margin-top:3px;font-family:monospace;">{cpf_show}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        with col_s2:
+                            # Botão para buscar outras empresas do sócio
+                            if st.button(f"🏢 Outras empresas", key=f"btn_socio_{i}_{cnpj_rf}"):
+                                with st.spinner(f"Buscando empresas de {nome_s.split()[0]}..."):
+                                    # Buscar pelo nome do sócio via CNPJ.ws
+                                    try:
+                                        url_socio = f"https://publica.cnpj.ws/socios/{nome_s.replace(' ','%20')}"
+                                        req_s = _ur.Request(url_socio, headers={"User-Agent":"Mozilla/5.0"})
+                                        with _ur.urlopen(req_s, timeout=10) as rs:
+                                            outras = json.loads(rs.read().decode())
+                                        st.session_state[f"outras_{i}_{cnpj_rf}"] = outras
+                                    except:
+                                        st.session_state[f"outras_{i}_{cnpj_rf}"] = []
+
+                        # Exibir outras empresas se consultou
+                        outras = st.session_state.get(f"outras_{i}_{cnpj_rf}")
+                        if outras is not None:
+                            if outras:
+                                st.markdown(f'<div style="font-size:11px;font-weight:600;color:#0a1628;padding:4px 0 2px 0;">Empresas vinculadas a <em>{nome_s.split()[0]}</em>:</div>', unsafe_allow_html=True)
+                                for oe in outras[:10]:
+                                    cnpj_oe = oe.get("cnpj","")
+                                    nome_oe = oe.get("razao_social","—")
+                                    sit_oe  = oe.get("situacao","—")
+                                    cor_oe  = "#1E7E34" if "ATIVA" in str(sit_oe).upper() else "#999"
+                                    st.markdown(f"""
+                                    <div style="font-size:11px;padding:4px 8px;background:#fff;border:1px solid #e2e8f0;
+                                                border-radius:6px;margin-bottom:4px;display:flex;justify-content:space-between;">
+                                        <span><strong>{nome_oe}</strong> <span style="color:#8a95b0;font-family:monospace;">{cnpj_oe}</span></span>
+                                        <span style="color:{cor_oe};font-weight:600;">{sit_oe}</span>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                            else:
+                                st.info(f"Nenhuma outra empresa encontrada para {nome_s.split()[0]}.")
+                else:
+                    st.info("Nenhum sócio encontrado na base pública da Receita Federal.")
+
+                # ── RODAPÉ ──
+                st.markdown('<div style="font-size:10px;color:#b0b8cc;margin-top:16px;text-align:center;">Fonte: API pública CNPJ.ws / BrasilAPI · Dados da Receita Federal do Brasil · Atualização diária</div>', unsafe_allow_html=True)
+
+            else:
+                st.markdown("""
+                <div style="text-align:center;padding:48px 20px;color:#8a95b0;">
+                    <div style="font-size:48px;margin-bottom:16px;">🏢</div>
+                    <div style="font-size:15px;font-weight:600;color:#4a5568;margin-bottom:8px;">Dados da Receita Federal</div>
+                    <div style="font-size:13px;">Clique em <strong>Consultar Receita Federal</strong> para buscar<br>
+                    situação cadastral, sócios e dados públicos da empresa.</div>
+                </div>
+                """, unsafe_allow_html=True)
 
     elif buscar and not q:
         st.warning("Digite algo para buscar.")
