@@ -18,21 +18,21 @@
     "perfil": "vendedor",
     "nome": "Francisco Carlos Andrade",
     "consultor_key": "FRANCISCO CARLOS DE ANDRADE",
-    "ultimo_acesso": "2026-05-05T15:02:25"
+    "ultimo_acesso": "2026-05-04T10:26:09"
   },
   "GLADSTON": {
     "senha_hash": "1cda5da1d9897ff4f5c7be1529a708e792b4222385e99a1f42dc7fa8770f71c4",
     "perfil": "vendedor",
     "nome": "Gladston Barbosa",
     "consultor_key": "GLADSTON BARBOSA",
-    "ultimo_acesso": "2026-05-05T11:29:31"
+    "ultimo_acesso": "2026-04-24T15:28:37"
   },
   "JANAINA": {
     "senha_hash": "92c721e582a08bf2a9897e0f3c606f61976efdaf16e65e79eccc7f3cf422ed17",
     "perfil": "vendedor",
     "nome": "Janaina Broglio",
     "consultor_key": "JANAINA BROGLIO",
-    "ultimo_acesso": "2026-05-05T12:51:41"
+    "ultimo_acesso": "2026-04-27T11:38:57"
   },
   "LEONARDO": {
     "senha_hash": "a0ce073d8054fe1bb21b792266aba41130a430594264827a113d1bb3e9c85f8d",
@@ -103,5 +103,12 @@
     "nome": "MARIANA FARIA",
     "consultor_key": "MARIANA",
     "ultimo_acesso": "2026-04-27T09:42:58"
+  },
+  "SIMONE": {
+    "senha_hash": "d85c575934598f448f35db5f8080501bf4876753eeb39d713f043430a63a5b96",
+    "perfil": "vendedor",
+    "nome": "Simone Tauber",
+    "consultor_key": "SIMONE A. TAUBER LIVIDATTI",
+    "ultimo_acesso": null
   }
 }
