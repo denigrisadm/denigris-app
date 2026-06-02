@@ -48,13 +48,6 @@
     "consultor_key": "PAULO CESAR LAMEU",
     "ultimo_acesso": "2026-05-19T15:50:15"
   },
-  "RENATA": {
-    "senha_hash": "9ca9b4638548ca0c4182e5ab929f96d1e6b233662ae59e3c254f24c1beed796b",
-    "perfil": "vendedor",
-    "nome": "Renata Bellon",
-    "consultor_key": "RENATA BELLON",
-    "ultimo_acesso": "2026-05-14T17:11:17"
-  },
   "ROSANGELA": {
     "senha_hash": "ae2bd855be442a1284fc878aa5a074fc85b2acf54dc8b41294d2a7a354d2cb30",
     "perfil": "vendedor",
