@@ -103,5 +103,12 @@
     "nome": "Simone Tauber",
     "consultor_key": "SIMONE A. TAUBER LIVIDATTI",
     "ultimo_acesso": "2026-05-05T16:02:04"
+  },
+  "ROBSON": {
+    "senha_hash": "b07bb54c382af04b1c5a47aab8fc0149a513941ca891334bf95658d248ee13d5",
+    "perfil": "vendedor",
+    "nome": "Robson Andre",
+    "consultor_key": "RENATA BELLON",
+    "ultimo_acesso": null
   }
 }
