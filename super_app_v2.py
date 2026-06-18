@@ -3315,230 +3315,89 @@ elif pagina == "mapa":
             "status_color": "#1E7E34" if em_cart else "#C0392B",
         })
 
-    dados_json_str = json.dumps(clientes_json, ensure_ascii=False)
+    # ── Renderizar mapa com Folium (funciona 100% no Streamlit) ──
+    try:
+        import folium
+        from streamlit_folium import st_folium
+        _folium_ok = True
+    except ImportError:
+        _folium_ok = False
+
+    if not _folium_ok:
+        st.error("⚠️ Instale as dependências do mapa: `pip install folium streamlit-folium`")
+        st.code("pip install folium streamlit-folium", language="bash")
+        st.stop()
+
     centro_lat = sum(c["lat"] for c in clientes_json) / len(clientes_json)
     centro_lon = sum(c["lon"] for c in clientes_json) / len(clientes_json)
-    show_heat_btn = "block" if perfil in ("gestor", "gerente") else "none"
 
-    mapa_html = f"""<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
-  <style>
-    *{{box-sizing:border-box;margin:0;padding:0;}}
-    body{{font-family:'Segoe UI',sans-serif;background:#f0f4ff;}}
-    #map{{height:520px;width:100%;border-radius:12px;}}
-    #side-panel{{
-      position:absolute;top:10px;left:10px;z-index:1000;
-      background:rgba(255,255,255,0.97);padding:12px 14px;
-      border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.2);
-      width:230px;max-height:500px;overflow-y:auto;font-size:12px;
-    }}
-    #side-panel h4{{font-size:13px;color:#0a1628;margin-bottom:8px;font-weight:700;}}
-    #search-box{{
-      width:100%;padding:7px 10px;border:1.5px solid #d0d7e8;
-      border-radius:8px;font-size:12px;margin-bottom:8px;color:#0a1628;outline:none;
-    }}
-    #search-box:focus{{border-color:#1565C0;}}
-    #raio-label{{font-size:11px;color:#4a5568;margin-bottom:3px;}}
-    #raio-slider{{width:100%;accent-color:#1565C0;}}
-    #gps-btn{{
-      width:100%;margin-top:8px;padding:7px;background:#1565C0;
-      color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;
-    }}
-    #gps-btn:hover{{background:#0d47a1;}}
-    #gps-status{{font-size:10px;color:#8a95b0;margin-top:5px;text-align:center;}}
-    #count-label{{margin-top:8px;font-size:11px;color:#4a5568;text-align:center;padding:5px;background:#f0f4ff;border-radius:6px;}}
-    #lista-clientes{{margin-top:8px;}}
-    .cli-item{{padding:6px 8px;border-radius:6px;cursor:pointer;margin-bottom:3px;border:1px solid #e0e7ff;background:#fafbff;}}
-    .cli-item:hover{{background:#e8f0ff;}}
-    .cli-nome{{font-weight:700;color:#0a1628;font-size:11px;}}
-    .cli-cidade{{color:#8a95b0;font-size:10px;}}
-    .cli-vol{{font-size:10px;font-weight:600;}}
-    #legenda{{
-      position:absolute;bottom:18px;right:8px;z-index:1000;
-      background:rgba(255,255,255,0.95);padding:10px 13px;
-      border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.15);font-size:11px;min-width:165px;
-    }}
-    #legenda b{{font-size:12px;color:#0a1628;display:block;margin-bottom:5px;}}
-    .leg-item{{display:flex;align-items:center;gap:6px;margin-bottom:3px;color:#4a5568;}}
-    .leg-dot{{width:12px;height:12px;border-radius:50%;flex-shrink:0;}}
-    #toggle-heat{{
-      position:absolute;top:10px;right:8px;z-index:1000;
-      background:rgba(255,255,255,0.95);padding:7px 12px;
-      border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,0.15);
-      font-size:11px;cursor:pointer;font-weight:700;color:#0a1628;border:none;
-      display:{show_heat_btn};
-    }}
-    #toggle-heat:hover{{background:#e8f0ff;}}
-    .pop-nome{{font-size:13px;font-weight:700;color:#0a1628;margin-bottom:3px;}}
-    .pop-cnpj{{font-size:10px;color:#8a95b0;font-family:monospace;margin-bottom:5px;}}
-    .pop-row{{font-size:11px;color:#4a5568;margin-bottom:2px;}}
-    .pop-status{{display:inline-block;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;margin-bottom:7px;}}
-    .pop-btns{{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;}}
-    .pop-btn{{flex:1;padding:6px 4px;border-radius:6px;text-align:center;font-size:11px;font-weight:700;text-decoration:none;display:block;min-width:55px;}}
-    .btn-maps{{background:#e8f0ff;color:#1a73e8;}}
-    .btn-waze{{background:#f0eaff;color:#7c3aed;}}
-    .btn-dados{{background:#e8f8ee;color:#007030;cursor:pointer;border:none;width:100%;margin-top:5px;padding:7px;border-radius:6px;font-size:11px;font-weight:700;}}
-  </style>
-</head>
-<body>
-<div style="position:relative;">
-  <div id="map"></div>
-  <div id="side-panel">
-    <h4>🗺️ Inteligência de Campo</h4>
-    <input id="search-box" type="text" placeholder="Buscar nome ou CNPJ..."/>
-    <div id="raio-label">📍 Raio: <b id="raio-val">{raio_km} km</b></div>
-    <input id="raio-slider" type="range" min="1" max="200" value="{raio_km}" step="1"/>
-    <button id="gps-btn">📡 Usar minha localização</button>
-    <div id="gps-status">Clique para ativar o GPS</div>
-    <div id="count-label">Exibindo <b id="vis-count">0</b> clientes</div>
-    <div id="lista-clientes"></div>
+    # ── Mapa de calor (gestor/gerente) via toggle ──
+    if perfil in ("gestor", "gerente"):
+        col_tog1, col_tog2 = st.columns([1, 5])
+        with col_tog1:
+            modo_calor = st.toggle("🔥 Mapa de Calor", value=False, key="mapa_calor_toggle")
+    else:
+        modo_calor = False
+
+    # Construir mapa Folium
+    m = folium.Map(
+        location=[centro_lat, centro_lon],
+        zoom_start=10,
+        tiles="CartoDB positron",
+        prefer_canvas=True,
+    )
+
+    if modo_calor:
+        # Mapa de calor — peso = volume normalizado
+        from folium.plugins import HeatMap
+        heat_data = [[c["lat"], c["lon"], min(c["vol"] / 10.0, 1.0)] for c in clientes_json]
+        HeatMap(heat_data, radius=30, blur=25, max_zoom=13).add_to(m)
+    else:
+        # Marcadores por cluster de cidade para performance
+        import urllib.parse as _urlp_m
+        for c in clientes_json:
+            raio_marcador = min(6 + c["vol"] * 0.7, 18)
+            popup_html = f"""
+<div style="width:240px;font-family:'Segoe UI',sans-serif;">
+  <div style="font-size:13px;font-weight:700;color:#0a1628;margin-bottom:3px;">{c['nome']}</div>
+  <div style="font-size:10px;color:#8a95b0;font-family:monospace;margin-bottom:5px;">{c['cnpj']}</div>
+  <span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;margin-bottom:7px;background:{c['status_color']}22;color:{c['status_color']};">{c['status_label']}</span>
+  <div style="font-size:11px;color:#4a5568;margin-bottom:2px;">📍 <b>Cidade:</b> {c['cidade']}</div>
+  <div style="font-size:11px;color:#4a5568;margin-bottom:2px;">🚚 <b>Últ. Modelo:</b> {c['modelo']}</div>
+  <div style="font-size:11px;color:#4a5568;margin-bottom:8px;">📦 <b>Emplacamentos:</b> {c['vol']}</div>
+  <div style="display:flex;gap:5px;margin-bottom:5px;">
+    <a href="{c['gmaps']}" target="_blank" style="flex:1;padding:6px 4px;background:#e8f0ff;color:#1a73e8;border-radius:6px;text-align:center;font-size:11px;font-weight:700;text-decoration:none;">🗺️ Google Maps</a>
+    <a href="{c['waze']}" target="_blank" style="flex:1;padding:6px 4px;background:#f0eaff;color:#7c3aed;border-radius:6px;text-align:center;font-size:11px;font-weight:700;text-decoration:none;">🚗 Waze</a>
   </div>
-  <button id="toggle-heat" onclick="toggleHeat()">🔥 Mapa de Calor</button>
-  <div id="legenda">
-    <b>Volume de Emplacamentos</b>
-    <div class="leg-item"><div class="leg-dot" style="background:#8B0000;"></div> Alto (≥10)</div>
-    <div class="leg-item"><div class="leg-dot" style="background:#e53935;"></div> Médio (5–9)</div>
-    <div class="leg-item"><div class="leg-dot" style="background:#1565C0;"></div> Baixo / Potencial</div>
-    <div class="leg-item"><div class="leg-dot" style="background:#1E7E34;"></div> Cadastrado</div>
-  </div>
-</div>
-<script>
-const CLIENTES={dados_json_str};
-var map=L.map('map').setView([{centro_lat},{centro_lon}],10);
-L.tileLayer('https://{{s}}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}.png',{{attribution:'© OpenStreetMap'}}).addTo(map);
-var markers=[],heatLayer=null,heatVisible=false,userLat=null,userLon=null,userCircle=null,userMarker=null;
+  <div style="font-size:10px;color:#8a95b0;text-align:center;">CNPJ para busca: <b>{c['cnpj_norm']}</b></div>
+</div>"""
+            folium.CircleMarker(
+                location=[c["lat"], c["lon"]],
+                radius=raio_marcador,
+                color="#ffffff",
+                weight=2,
+                fill=True,
+                fill_color=c["cor"],
+                fill_opacity=0.85,
+                popup=folium.Popup(popup_html, max_width=260),
+                tooltip=f"{c['nome']} · {c['vol']} empl.",
+            ).add_to(m)
 
-function haversine(a,b,c,d){{
-  var R=6371,dLat=(c-a)*Math.PI/180,dLon=(d-b)*Math.PI/180;
-  var e=Math.sin(dLat/2)**2+Math.cos(a*Math.PI/180)*Math.cos(c*Math.PI/180)*Math.sin(dLon/2)**2;
-  return R*2*Math.atan2(Math.sqrt(e),Math.sqrt(1-e));
-}}
+    # Renderizar o mapa
+    map_data = st_folium(m, width="100%", height=560, returned_objects=[], key="folium_mapa")
 
-function buildPopup(c){{
-  return '<div style="width:220px;">'
-    +'<div class="pop-nome">'+c.nome+'</div>'
-    +'<div class="pop-cnpj">'+c.cnpj+'</div>'
-    +'<span class="pop-status" style="background:'+c.status_color+'22;color:'+c.status_color+';">'+c.status_label+'</span>'
-    +'<div class="pop-row">📍 <b>Cidade:</b> '+c.cidade+'</div>'
-    +'<div class="pop-row">🚚 <b>Últ. Modelo:</b> '+c.modelo+'</div>'
-    +'<div class="pop-row">📦 <b>Emplacamentos:</b> '+c.vol+'</div>'
-    +'<div class="pop-btns">'
-    +'<a href="'+c.gmaps+'" target="_blank" class="pop-btn btn-maps">🗺️ Google Maps</a>'
-    +'<a href="'+c.waze+'" target="_blank" class="pop-btn btn-waze">🚗 Waze</a>'
-    +'</div>'
-    +'<button class="btn-dados" onclick="buscarCliente(\''+c.cnpj_norm+'\')">🔍 Ver Dados do Cliente</button>'
-    +'</div>';
-}}
+    # ── Dica de uso do botão "Ver Dados" ──
+    st.info(
+        "💡 **Dica:** Clique num marcador para ver o popup. "
+        "Copie o CNPJ exibido e cole na barra de busca acima para ver o histórico completo do cliente. "
+        "Os botões Google Maps e Waze abrem o GPS direto no celular."
+    )
 
-function buscarCliente(cnpj){{
-  window.parent.postMessage({{type:'streamlit:setComponentValue',value:{{action:'buscar_cliente',cnpj:cnpj}}}},'*');
-}}
-
-function addMarkers(lista){{
-  markers.forEach(function(m){{map.removeLayer(m);}});
-  markers=[];
-  lista.forEach(function(c){{
-    var r=Math.min(6+c.vol*0.7,18);
-    var m=L.circleMarker([c.lat,c.lon],{{
-      radius:r,fillColor:c.cor,color:'#fff',weight:2,opacity:1,fillOpacity:0.85
-    }});
-    m.bindPopup(buildPopup(c),{{maxWidth:240}});
-    m.addTo(map);
-    markers.push(m);
-  }});
-  document.getElementById('vis-count').textContent=lista.length;
-  updateLista(lista);
-}}
-
-function updateLista(lista){{
-  var el=document.getElementById('lista-clientes');
-  if(!lista.length){{el.innerHTML='<div style="color:#8a95b0;text-align:center;font-size:11px;padding:10px;">Nenhum cliente</div>';return;}}
-  el.innerHTML=lista.slice(0,30).map(function(c){{
-    return '<div class="cli-item" onclick="map.flyTo(['+c.lat+','+c.lon+'],14,{{duration:0.8}})">'
-      +'<div class="cli-nome">'+(c.nome.length>26?c.nome.slice(0,26)+'…':c.nome)+'</div>'
-      +'<div class="cli-cidade">'+c.cidade+'</div>'
-      +'<div class="cli-vol" style="color:'+c.cor+';">📦 '+c.vol+' emplacamentos</div>'
-      +'</div>';
-  }}).join('');
-}}
-
-function filterAndRender(){{
-  var q=document.getElementById('search-box').value.trim().toLowerCase();
-  var raio=parseInt(document.getElementById('raio-slider').value);
-  document.getElementById('raio-val').textContent=raio+' km';
-  var lista=CLIENTES.filter(function(c){{
-    if(q&&!c.nome.toLowerCase().includes(q)&&!c.cnpj.includes(q)&&!c.cnpj_norm.includes(q))return false;
-    if(userLat!==null&&haversine(userLat,userLon,c.lat,c.lon)>raio)return false;
-    return true;
-  }});
-  addMarkers(lista);
-}}
-
-document.getElementById('gps-btn').addEventListener('click',function(){{
-  if(!navigator.geolocation){{document.getElementById('gps-status').textContent='❌ GPS não suportado.';return;}}
-  document.getElementById('gps-status').textContent='📡 Obtendo localização...';
-  navigator.geolocation.getCurrentPosition(
-    function(pos){{
-      userLat=pos.coords.latitude;userLon=pos.coords.longitude;
-      document.getElementById('gps-status').textContent='✅ GPS ativo ('+userLat.toFixed(4)+', '+userLon.toFixed(4)+')';
-      if(userMarker)map.removeLayer(userMarker);
-      if(userCircle)map.removeLayer(userCircle);
-      var raio=parseInt(document.getElementById('raio-slider').value);
-      userMarker=L.circleMarker([userLat,userLon],{{radius:10,fillColor:'#FF6600',color:'#fff',weight:3,fillOpacity:1}}).bindPopup('📍 Você está aqui').addTo(map);
-      userCircle=L.circle([userLat,userLon],{{radius:raio*1000,color:'#FF6600',fillColor:'#FF6600',fillOpacity:0.07,weight:2,dashArray:'6,4'}}).addTo(map);
-      map.flyTo([userLat,userLon],11,{{duration:1}});
-      filterAndRender();
-    }},
-    function(){{document.getElementById('gps-status').textContent='❌ Não foi possível obter localização.';}},
-    {{enableHighAccuracy:true,timeout:10000}}
-  );
-}});
-
-document.getElementById('raio-slider').addEventListener('input',function(){{
-  var raio=parseInt(this.value);
-  document.getElementById('raio-val').textContent=raio+' km';
-  if(userLat!==null&&userCircle)userCircle.setRadius(raio*1000);
-  filterAndRender();
-}});
-
-document.getElementById('search-box').addEventListener('input',filterAndRender);
-
-function toggleHeat(){{
-  if(!heatVisible){{
-    var d=CLIENTES.map(function(c){{return[c.lat,c.lon,Math.min(c.vol/10,1.0)];}});
-    heatLayer=L.heatLayer(d,{{radius:30,blur:25,maxZoom:13}}).addTo(map);
-    heatVisible=true;
-    document.getElementById('toggle-heat').textContent='❄️ Mapa Normal';
-  }}else{{
-    if(heatLayer)map.removeLayer(heatLayer);
-    heatVisible=false;
-    document.getElementById('toggle-heat').textContent='🔥 Mapa de Calor';
-  }}
-}}
-
-filterAndRender();
-</script>
-</body>
-</html>"""
-
-    st.components.v1.html(mapa_html, height=580, scrolling=False)
-
-    # Verificar redirect do mapa para busca
-    if st.session_state.get("mapa_redirect_cnpj"):
-        cnpj_redirect = st.session_state.pop("mapa_redirect_cnpj")
-        st.session_state["busca_q"] = cnpj_redirect
-        st.session_state["busca_cnpj_sel"] = cnpj_redirect
-        st.session_state.pagina = "busca"
-        st.rerun()
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.info("💡 **Dica:** No popup de cada cliente, clique em **🔍 Ver Dados do Cliente** para acessar o histórico completo na aba Busca. Para navegar use os botões de rota que abrem o GPS direto no celular.")
+    # ── GPS / Raio: instrução adaptada (GPS nativo não funciona em iframe Folium) ──
+    st.caption(
+        f"📍 Filtro de raio ativo: {raio_km} km · "
+        "Para filtrar por proximidade, use a busca por cidade na barra acima."
+    )
 
     with st.expander(f"📋 Lista completa ({total_geo} clientes no mapa)", expanded=False):
         cols_show = [c for c in ["NOMEPROPRIETARIO","CPFCNPJPROPRIETARIO","NO_CIDADE","Modelo","volume","em_carteira"] if c in df_plot_geo.columns]
