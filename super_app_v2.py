@@ -1197,9 +1197,9 @@ if st.session_state.df_emp_list and st.session_state.get("_emp_merged_len") != _
     st.session_state["_emp_merged_len"] = _emp_list_len
 df_emp = st.session_state.get("_df_emp_merged") if st.session_state.df_emp_list else None
 
-PAGINAS_GESTOR  = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun."),("admin","⚙️","Admin")]
-PAGINAS_GERENTE = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun.")]
-PAGINAS_VEND    = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("oportunidades","🎯","Oportun.")]
+PAGINAS_GESTOR  = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun."),("mapa","🗺️","Mapa"),("admin","⚙️","Admin")]
+PAGINAS_GERENTE = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun."),("mapa","🗺️","Mapa")]
+PAGINAS_VEND    = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("oportunidades","🎯","Oportun."),("mapa","🗺️","Mapa")]
 
 if perfil == "gestor": PAGINAS = PAGINAS_GESTOR
 elif perfil == "gerente": PAGINAS = PAGINAS_GERENTE
@@ -3024,5 +3024,534 @@ elif pagina == "admin":
                 if st.button("🗑️ Limpar emplacamentos"):
                     st.session_state.df_emp_list=[]; st.session_state.emp_fontes=[]; st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# PÁGINA: MAPA DE INTELIGÊNCIA COMERCIAL
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+elif pagina == "mapa":
+    st.markdown("""<div class="page-header"><h1>🗺️ Mapa de Inteligência</h1>
+    <p>Clientes não cadastrados · Prospecção de campo</p></div>""", unsafe_allow_html=True)
+
+    if df_emp is None:
+        st.warning("⚠️ Carregue os dados na aba Admin → Gerenciar Dados")
+        st.stop()
+
+    # ── Tabela de coordenadas por cidade ──
+    COORDS_CIDADES = {
+        "SAO PAULO": (-23.5505, -46.6333),
+        "GUARULHOS": (-23.4543, -46.5333),
+        "CAMPINAS": (-22.9056, -47.0608),
+        "SAO BERNARDO DO CAMPO": (-23.6914, -46.5646),
+        "SANTO ANDRE": (-23.6639, -46.5383),
+        "SAO CAETANO DO SUL": (-23.6228, -46.5756),
+        "OSASCO": (-23.5324, -46.7920),
+        "MOGI DAS CRUZES": (-23.5219, -46.1856),
+        "DIADEMA": (-23.6861, -46.6231),
+        "BARUERI": (-23.5107, -46.8756),
+        "TABOAO DA SERRA": (-23.6028, -46.7581),
+        "CARAPICUIBA": (-23.5228, -46.8356),
+        "ITAQUAQUECETUBA": (-23.4861, -46.3489),
+        "SUZANO": (-23.5428, -46.3106),
+        "COTIA": (-23.6036, -46.9189),
+        "EMBU DAS ARTES": (-23.6494, -46.8519),
+        "FERRAZ DE VASCONCELOS": (-23.5408, -46.3669),
+        "FRANCO DA ROCHA": (-23.3256, -46.7256),
+        "ITAPEVI": (-23.5489, -47.0606),
+        "JANDIRA": (-23.5294, -46.9019),
+        "MAIRIPORA": (-23.3181, -46.5869),
+        "POA": (-23.5289, -46.3456),
+        "RIBEIRAO PIRES": (-23.7108, -46.4119),
+        "RIO GRANDE DA SERRA": (-23.7439, -46.3969),
+        "SALESOPOLIS": (-23.5319, -45.8456),
+        "SANTA ISABEL": (-23.3156, -46.2231),
+        "SANTANA DE PARNAIBA": (-23.4428, -46.9169),
+        "VARGEM GRANDE PAULISTA": (-23.6028, -47.0339),
+        "ARUJA": (-23.3939, -46.3219),
+        "SOROCABA": (-23.5015, -47.4526),
+        "SAO JOSE DOS CAMPOS": (-23.1794, -45.8869),
+        "RIBEIRAO PRETO": (-21.1775, -47.8103),
+        "SAO JOSE DO RIO PRETO": (-20.8197, -49.3794),
+        "SANTOS": (-23.9608, -46.3336),
+        "JUNDIAI": (-23.1864, -46.8981),
+        "PIRACICABA": (-22.7253, -47.6492),
+        "BAURU": (-22.3147, -49.0611),
+        "TAUBATE": (-23.0256, -45.5553),
+        "LIMEIRA": (-22.5639, -47.4019),
+        "SAO VICENTE": (-23.9608, -46.3919),
+        "PRAIA GRANDE": (-24.0069, -46.4025),
+        "FRANCA": (-20.5386, -47.4008),
+        "MARILIA": (-22.2136, -49.9458),
+        "PRESIDENTE PRUDENTE": (-22.1256, -51.3889),
+        "ARARAQUARA": (-21.7947, -48.1756),
+        "ARARAS": (-22.3572, -47.3839),
+        "INDAIATUBA": (-23.0894, -47.2169),
+        "CATANDUVA": (-21.1381, -48.9725),
+        "ARACATUBA": (-21.2086, -50.4322),
+        "BOTUCATU": (-22.8856, -48.4447),
+        "AMERICANA": (-22.7397, -47.3336),
+        "ITAPETININGA": (-23.5917, -48.0519),
+        "ITAPEVA": (-23.9822, -48.8761),
+        "REGISTRO": (-24.4878, -47.8461),
+        "OURINHOS": (-22.9789, -49.8703),
+        "ASSIS": (-22.6622, -50.4178),
+        "LINS": (-21.6783, -49.7458),
+        "PENAPOLIS": (-21.4219, -50.0803),
+        "VOTUPORANGA": (-20.4228, -49.9739),
+        "ANDRADINA": (-20.8953, -51.3806),
+        "BIRIGUI": (-21.2881, -50.3378),
+        "TUPA": (-21.9347, -50.5139),
+        "MOCOCA": (-21.4706, -47.0011),
+        "SERTAOZINHO": (-21.1378, -47.9922),
+        "OLIMPIA": (-20.7358, -48.9142),
+        "CURITIBA": (-25.4284, -49.2733),
+        "LONDRINA": (-23.3045, -51.1696),
+        "MARINGA": (-23.4273, -51.9375),
+        "CASCAVEL": (-24.9578, -53.4595),
+        "FOZ DO IGUACU": (-25.5478, -54.5882),
+        "PONTA GROSSA": (-25.0944, -50.1597),
+        "SAO JOSE DOS PINHAIS": (-25.5317, -49.2069),
+        "COLOMBO": (-25.2922, -49.2239),
+        "PORTO ALEGRE": (-30.0346, -51.2177),
+        "CAXIAS DO SUL": (-29.1678, -51.1794),
+        "PELOTAS": (-31.7654, -52.3392),
+        "CANOAS": (-29.9178, -51.1839),
+        "NOVO HAMBURGO": (-29.6783, -51.1306),
+        "SAO LEOPOLDO": (-29.7608, -51.1483),
+        "SANTA MARIA": (-29.6842, -53.8069),
+        "BELO HORIZONTE": (-19.9191, -43.9387),
+        "CONTAGEM": (-19.9319, -44.0539),
+        "BETIM": (-19.9678, -44.1983),
+        "UBERLANDIA": (-18.9186, -48.2772),
+        "JUIZ DE FORA": (-21.7642, -43.3503),
+        "MONTES CLAROS": (-16.7286, -43.8619),
+        "GOVERNADOR VALADARES": (-18.8511, -41.9494),
+        "IPATINGA": (-19.4678, -42.5361),
+        "UBERABA": (-19.7483, -47.9317),
+        "RIBEIRAO DAS NEVES": (-19.7639, -44.0869),
+        "RIO DE JANEIRO": (-22.9068, -43.1729),
+        "SAO GONCALO": (-22.8268, -43.0539),
+        "DUQUE DE CAXIAS": (-22.7858, -43.3119),
+        "NOVA IGUACU": (-22.7592, -43.4511),
+        "CAMPOS DOS GOYTACAZES": (-21.7558, -41.3306),
+        "NITEROI": (-22.8836, -43.1036),
+        "VOLTA REDONDA": (-22.5231, -44.1039),
+        "PETROPOLIS": (-22.5050, -43.1789),
+        "MACAE": (-22.3700, -41.7869),
+        "SALVADOR": (-12.9711, -38.5108),
+        "FEIRA DE SANTANA": (-12.2664, -38.9663),
+        "VITORIA DA CONQUISTA": (-14.8619, -40.8444),
+        "RECIFE": (-8.0539, -34.8811),
+        "CARUARU": (-8.2839, -35.9761),
+        "PETROLINA": (-9.3878, -40.5036),
+        "FORTALEZA": (-3.7319, -38.5267),
+        "JUAZEIRO DO NORTE": (-7.2133, -39.3150),
+        "MANAUS": (-3.1019, -60.0250),
+        "BELEM": (-1.4558, -48.4902),
+        "BRASILIA": (-15.7801, -47.9292),
+        "GOIANIA": (-16.6869, -49.2648),
+        "APARECIDA DE GOIANIA": (-16.8236, -49.2439),
+        "ANAPOLIS": (-16.3281, -48.9528),
+        "CAMPO GRANDE": (-20.4697, -54.6201),
+        "DOURADOS": (-22.2231, -54.8122),
+        "CUIABA": (-15.6014, -56.0979),
+        "RONDONOPOLIS": (-16.4736, -54.6361),
+        "NATAL": (-5.7945, -35.2110),
+        "MOSSORO": (-5.1877, -37.3444),
+        "JOAO PESSOA": (-7.1153, -34.8641),
+        "CAMPINA GRANDE": (-7.2306, -35.8811),
+        "MACEIO": (-9.6658, -35.7350),
+        "ARACAJU": (-10.9472, -37.0731),
+        "TERESINA": (-5.0892, -42.8019),
+        "SAO LUIS": (-2.5364, -44.3069),
+        "VITORIA": (-20.3155, -40.3128),
+        "VILA VELHA": (-20.3292, -40.2925),
+        "SERRA": (-20.1286, -40.3075),
+        "CARIACICA": (-20.2639, -40.4169),
+        "CACHOEIRO DE ITAPEMIRIM": (-20.8489, -41.1136),
+        "FLORIANOPOLIS": (-27.5954, -48.5480),
+        "JOINVILLE": (-26.3044, -48.8456),
+        "BLUMENAU": (-26.9194, -49.0661),
+        "SAO JOSE": (-27.5942, -48.6358),
+        "CRICIUMA": (-28.6775, -49.3697),
+        "CHAPECO": (-27.1008, -52.6150),
+        "ITAJAI": (-26.9078, -48.6619),
+        "MACAPA": (0.0349, -51.0694),
+        "BOA VISTA": (2.8197, -60.6733),
+        "PALMAS": (-10.2128, -48.3603),
+        "PORTO VELHO": (-8.7612, -63.9004),
+        "RIO BRANCO": (-9.9753, -67.8249),
+    }
+
+    def _coords_cidade(cidade_str):
+        if not cidade_str or str(cidade_str).strip() in ("", "nan", "None", "—"):
+            return None
+        c = norm_str(str(cidade_str))
+        return COORDS_CIDADES.get(c)
+
+    # ── Filtrar base ──
+    cnpjs_carteira = set(df_cart["CNPJ_NORM"].dropna().tolist()) if df_cart is not None else set()
+
+    if perfil == "vendedor" and df_area is not None:
+        munic_m, cep_r_m = get_munic_area(cons_key, df_area)
+        df_mapa_base = emp_da_area(df_emp, munic_m, cep_r_m)
+    else:
+        df_mapa_base = df_emp.copy()
+
+    # Agrupar por cliente (último emplacamento)
+    df_mapa_clientes = (
+        df_mapa_base.sort_values("Data emplacamento", ascending=False)
+        .groupby("CNPJ_NORM", as_index=False)
+        .first()
+    )
+    vol_series = df_mapa_base.groupby("CNPJ_NORM")["Chassi"].count()
+    df_mapa_clientes["volume"] = df_mapa_clientes["CNPJ_NORM"].map(vol_series).fillna(1).astype(int)
+    df_mapa_clientes["em_carteira"] = df_mapa_clientes["CNPJ_NORM"].isin(cnpjs_carteira)
+
+    # ── Filtros ──
+    st.markdown('<div class="sec-title">🔎 Filtros</div>', unsafe_allow_html=True)
+    col_f1, col_f2 = st.columns([2, 1])
+    with col_f1:
+        busca_mapa = st.text_input("", placeholder="🔍  Buscar por nome ou CNPJ...",
+                                   label_visibility="collapsed", key="mapa_busca")
+    with col_f2:
+        raio_km = st.slider("📍 Raio (km)", min_value=1, max_value=200, value=50, step=1)
+
+    if perfil in ("gestor", "gerente"):
+        tipo_vis = st.radio("Exibir no mapa:", ["Apenas NÃO Cadastrados", "Apenas Cadastrados", "Todos"],
+                            horizontal=True, key="mapa_tipo")
+    else:
+        tipo_vis = "Apenas NÃO Cadastrados"
+
+    # Aplicar filtros
+    if tipo_vis == "Apenas NÃO Cadastrados":
+        df_plot = df_mapa_clientes[~df_mapa_clientes["em_carteira"]].copy()
+    elif tipo_vis == "Apenas Cadastrados":
+        df_plot = df_mapa_clientes[df_mapa_clientes["em_carteira"]].copy()
+    else:
+        df_plot = df_mapa_clientes.copy()
+
+    if busca_mapa.strip():
+        q_m = norm_str(busca_mapa.strip())
+        q_cnpj_m = re.sub(r"\D", "", busca_mapa.strip())
+        mask_nome_m = norm_str_series(df_plot["NOMEPROPRIETARIO"]).str.contains(q_m, na=False, regex=False)
+        mask_cnpj_m = df_plot["CNPJ_NORM"].str.startswith(q_cnpj_m) if q_cnpj_m else pd.Series(False, index=df_plot.index)
+        df_plot = df_plot[mask_nome_m | mask_cnpj_m]
+
+    # Geocodificar
+    df_plot["_coords"] = df_plot["NO_CIDADE"].apply(_coords_cidade)
+    df_plot_geo = df_plot[df_plot["_coords"].notna()].copy()
+    df_plot_geo["_lat"] = df_plot_geo["_coords"].apply(lambda x: x[0])
+    df_plot_geo["_lon"] = df_plot_geo["_coords"].apply(lambda x: x[1])
+
+    total_encontrados = len(df_plot)
+    total_geo = len(df_plot_geo)
+    sem_coords = total_encontrados - total_geo
+
+    # KPIs
+    kc1, kc2, kc3, kc4 = st.columns(4)
+    with kc1:
+        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Clientes no Mapa</div><div class="kpi-value">{total_geo}</div></div>', unsafe_allow_html=True)
+    with kc2:
+        nao_cad = int((~df_plot_geo["em_carteira"]).sum())
+        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Não Cadastrados</div><div class="kpi-value" style="color:#C0392B;">{nao_cad}</div></div>', unsafe_allow_html=True)
+    with kc3:
+        cad = int(df_plot_geo["em_carteira"].sum())
+        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Cadastrados</div><div class="kpi-value" style="color:#1E7E34;">{cad}</div></div>', unsafe_allow_html=True)
+    with kc4:
+        vol_total = int(df_plot_geo["volume"].sum())
+        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Total Emplacamentos</div><div class="kpi-value">{vol_total}</div></div>', unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    if sem_coords > 0:
+        st.caption(f"ℹ️ {sem_coords} cliente(s) ocultados — cidade não mapeada.")
+
+    if df_plot_geo.empty:
+        st.info("Nenhum cliente encontrado para os filtros selecionados.")
+        st.stop()
+
+    # ── Preparar JSON para o mapa ──
+    import urllib.parse as _urlp_m
+
+    clientes_json = []
+    for _, row in df_plot_geo.iterrows():
+        nome_c   = safe_str(row.get("NOMEPROPRIETARIO", ""))
+        cnpj_c   = safe_str(row.get("CPFCNPJPROPRIETARIO", ""))
+        cnpj_n   = safe_str(row.get("CNPJ_NORM", ""))
+        cidade_c = safe_str(row.get("NO_CIDADE", ""))
+        modelo_c = safe_str(row.get("Modelo", ""))
+        vol_c    = int(row.get("volume", 1))
+        lat_c    = float(row["_lat"])
+        lon_c    = float(row["_lon"])
+        em_cart  = bool(row.get("em_carteira", False))
+
+        if em_cart:
+            cor = "#1E7E34"
+        elif vol_c >= 10:
+            cor = "#8B0000"
+        elif vol_c >= 5:
+            cor = "#e53935"
+        else:
+            cor = "#1565C0"
+
+        addr_enc  = _urlp_m.quote(f"{nome_c}, {cidade_c}, Brasil")
+        gmaps_url = f"https://www.google.com/maps/search/?api=1&query={addr_enc}"
+        waze_url  = f"https://waze.com/ul?q={addr_enc}"
+
+        clientes_json.append({
+            "nome": nome_c,
+            "cnpj": cnpj_c,
+            "cnpj_norm": cnpj_n,
+            "cidade": cidade_c,
+            "modelo": modelo_c,
+            "vol": vol_c,
+            "lat": lat_c,
+            "lon": lon_c,
+            "cor": cor,
+            "em_cart": em_cart,
+            "gmaps": gmaps_url,
+            "waze": waze_url,
+            "status_label": "✅ Cadastrado" if em_cart else "⚠️ Não Cadastrado",
+            "status_color": "#1E7E34" if em_cart else "#C0392B",
+        })
+
+    dados_json_str = json.dumps(clientes_json, ensure_ascii=False)
+    centro_lat = sum(c["lat"] for c in clientes_json) / len(clientes_json)
+    centro_lon = sum(c["lon"] for c in clientes_json) / len(clientes_json)
+    show_heat_btn = "block" if perfil in ("gestor", "gerente") else "none"
+
+    mapa_html = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+  <style>
+    *{{box-sizing:border-box;margin:0;padding:0;}}
+    body{{font-family:'Segoe UI',sans-serif;background:#f0f4ff;}}
+    #map{{height:520px;width:100%;border-radius:12px;}}
+    #side-panel{{
+      position:absolute;top:10px;left:10px;z-index:1000;
+      background:rgba(255,255,255,0.97);padding:12px 14px;
+      border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.2);
+      width:230px;max-height:500px;overflow-y:auto;font-size:12px;
+    }}
+    #side-panel h4{{font-size:13px;color:#0a1628;margin-bottom:8px;font-weight:700;}}
+    #search-box{{
+      width:100%;padding:7px 10px;border:1.5px solid #d0d7e8;
+      border-radius:8px;font-size:12px;margin-bottom:8px;color:#0a1628;outline:none;
+    }}
+    #search-box:focus{{border-color:#1565C0;}}
+    #raio-label{{font-size:11px;color:#4a5568;margin-bottom:3px;}}
+    #raio-slider{{width:100%;accent-color:#1565C0;}}
+    #gps-btn{{
+      width:100%;margin-top:8px;padding:7px;background:#1565C0;
+      color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;
+    }}
+    #gps-btn:hover{{background:#0d47a1;}}
+    #gps-status{{font-size:10px;color:#8a95b0;margin-top:5px;text-align:center;}}
+    #count-label{{margin-top:8px;font-size:11px;color:#4a5568;text-align:center;padding:5px;background:#f0f4ff;border-radius:6px;}}
+    #lista-clientes{{margin-top:8px;}}
+    .cli-item{{padding:6px 8px;border-radius:6px;cursor:pointer;margin-bottom:3px;border:1px solid #e0e7ff;background:#fafbff;}}
+    .cli-item:hover{{background:#e8f0ff;}}
+    .cli-nome{{font-weight:700;color:#0a1628;font-size:11px;}}
+    .cli-cidade{{color:#8a95b0;font-size:10px;}}
+    .cli-vol{{font-size:10px;font-weight:600;}}
+    #legenda{{
+      position:absolute;bottom:18px;right:8px;z-index:1000;
+      background:rgba(255,255,255,0.95);padding:10px 13px;
+      border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.15);font-size:11px;min-width:165px;
+    }}
+    #legenda b{{font-size:12px;color:#0a1628;display:block;margin-bottom:5px;}}
+    .leg-item{{display:flex;align-items:center;gap:6px;margin-bottom:3px;color:#4a5568;}}
+    .leg-dot{{width:12px;height:12px;border-radius:50%;flex-shrink:0;}}
+    #toggle-heat{{
+      position:absolute;top:10px;right:8px;z-index:1000;
+      background:rgba(255,255,255,0.95);padding:7px 12px;
+      border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,0.15);
+      font-size:11px;cursor:pointer;font-weight:700;color:#0a1628;border:none;
+      display:{show_heat_btn};
+    }}
+    #toggle-heat:hover{{background:#e8f0ff;}}
+    .pop-nome{{font-size:13px;font-weight:700;color:#0a1628;margin-bottom:3px;}}
+    .pop-cnpj{{font-size:10px;color:#8a95b0;font-family:monospace;margin-bottom:5px;}}
+    .pop-row{{font-size:11px;color:#4a5568;margin-bottom:2px;}}
+    .pop-status{{display:inline-block;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;margin-bottom:7px;}}
+    .pop-btns{{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;}}
+    .pop-btn{{flex:1;padding:6px 4px;border-radius:6px;text-align:center;font-size:11px;font-weight:700;text-decoration:none;display:block;min-width:55px;}}
+    .btn-maps{{background:#e8f0ff;color:#1a73e8;}}
+    .btn-waze{{background:#f0eaff;color:#7c3aed;}}
+    .btn-dados{{background:#e8f8ee;color:#007030;cursor:pointer;border:none;width:100%;margin-top:5px;padding:7px;border-radius:6px;font-size:11px;font-weight:700;}}
+  </style>
+</head>
+<body>
+<div style="position:relative;">
+  <div id="map"></div>
+  <div id="side-panel">
+    <h4>🗺️ Inteligência de Campo</h4>
+    <input id="search-box" type="text" placeholder="Buscar nome ou CNPJ..."/>
+    <div id="raio-label">📍 Raio: <b id="raio-val">{raio_km} km</b></div>
+    <input id="raio-slider" type="range" min="1" max="200" value="{raio_km}" step="1"/>
+    <button id="gps-btn">📡 Usar minha localização</button>
+    <div id="gps-status">Clique para ativar o GPS</div>
+    <div id="count-label">Exibindo <b id="vis-count">0</b> clientes</div>
+    <div id="lista-clientes"></div>
+  </div>
+  <button id="toggle-heat" onclick="toggleHeat()">🔥 Mapa de Calor</button>
+  <div id="legenda">
+    <b>Volume de Emplacamentos</b>
+    <div class="leg-item"><div class="leg-dot" style="background:#8B0000;"></div> Alto (≥10)</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#e53935;"></div> Médio (5–9)</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#1565C0;"></div> Baixo / Potencial</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#1E7E34;"></div> Cadastrado</div>
+  </div>
+</div>
+<script>
+const CLIENTES={dados_json_str};
+var map=L.map('map').setView([{centro_lat},{centro_lon}],10);
+L.tileLayer('https://{{s}}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}.png',{{attribution:'© OpenStreetMap'}}).addTo(map);
+var markers=[],heatLayer=null,heatVisible=false,userLat=null,userLon=null,userCircle=null,userMarker=null;
+
+function haversine(a,b,c,d){{
+  var R=6371,dLat=(c-a)*Math.PI/180,dLon=(d-b)*Math.PI/180;
+  var e=Math.sin(dLat/2)**2+Math.cos(a*Math.PI/180)*Math.cos(c*Math.PI/180)*Math.sin(dLon/2)**2;
+  return R*2*Math.atan2(Math.sqrt(e),Math.sqrt(1-e));
+}}
+
+function buildPopup(c){{
+  return '<div style="width:220px;">'
+    +'<div class="pop-nome">'+c.nome+'</div>'
+    +'<div class="pop-cnpj">'+c.cnpj+'</div>'
+    +'<span class="pop-status" style="background:'+c.status_color+'22;color:'+c.status_color+';">'+c.status_label+'</span>'
+    +'<div class="pop-row">📍 <b>Cidade:</b> '+c.cidade+'</div>'
+    +'<div class="pop-row">🚚 <b>Últ. Modelo:</b> '+c.modelo+'</div>'
+    +'<div class="pop-row">📦 <b>Emplacamentos:</b> '+c.vol+'</div>'
+    +'<div class="pop-btns">'
+    +'<a href="'+c.gmaps+'" target="_blank" class="pop-btn btn-maps">🗺️ Google Maps</a>'
+    +'<a href="'+c.waze+'" target="_blank" class="pop-btn btn-waze">🚗 Waze</a>'
+    +'</div>'
+    +'<button class="btn-dados" onclick="buscarCliente(\''+c.cnpj_norm+'\')">🔍 Ver Dados do Cliente</button>'
+    +'</div>';
+}}
+
+function buscarCliente(cnpj){{
+  window.parent.postMessage({{type:'streamlit:setComponentValue',value:{{action:'buscar_cliente',cnpj:cnpj}}}},'*');
+}}
+
+function addMarkers(lista){{
+  markers.forEach(function(m){{map.removeLayer(m);}});
+  markers=[];
+  lista.forEach(function(c){{
+    var r=Math.min(6+c.vol*0.7,18);
+    var m=L.circleMarker([c.lat,c.lon],{{
+      radius:r,fillColor:c.cor,color:'#fff',weight:2,opacity:1,fillOpacity:0.85
+    }});
+    m.bindPopup(buildPopup(c),{{maxWidth:240}});
+    m.addTo(map);
+    markers.push(m);
+  }});
+  document.getElementById('vis-count').textContent=lista.length;
+  updateLista(lista);
+}}
+
+function updateLista(lista){{
+  var el=document.getElementById('lista-clientes');
+  if(!lista.length){{el.innerHTML='<div style="color:#8a95b0;text-align:center;font-size:11px;padding:10px;">Nenhum cliente</div>';return;}}
+  el.innerHTML=lista.slice(0,30).map(function(c){{
+    return '<div class="cli-item" onclick="map.flyTo(['+c.lat+','+c.lon+'],14,{{duration:0.8}})">'
+      +'<div class="cli-nome">'+(c.nome.length>26?c.nome.slice(0,26)+'…':c.nome)+'</div>'
+      +'<div class="cli-cidade">'+c.cidade+'</div>'
+      +'<div class="cli-vol" style="color:'+c.cor+';">📦 '+c.vol+' emplacamentos</div>'
+      +'</div>';
+  }}).join('');
+}}
+
+function filterAndRender(){{
+  var q=document.getElementById('search-box').value.trim().toLowerCase();
+  var raio=parseInt(document.getElementById('raio-slider').value);
+  document.getElementById('raio-val').textContent=raio+' km';
+  var lista=CLIENTES.filter(function(c){{
+    if(q&&!c.nome.toLowerCase().includes(q)&&!c.cnpj.includes(q)&&!c.cnpj_norm.includes(q))return false;
+    if(userLat!==null&&haversine(userLat,userLon,c.lat,c.lon)>raio)return false;
+    return true;
+  }});
+  addMarkers(lista);
+}}
+
+document.getElementById('gps-btn').addEventListener('click',function(){{
+  if(!navigator.geolocation){{document.getElementById('gps-status').textContent='❌ GPS não suportado.';return;}}
+  document.getElementById('gps-status').textContent='📡 Obtendo localização...';
+  navigator.geolocation.getCurrentPosition(
+    function(pos){{
+      userLat=pos.coords.latitude;userLon=pos.coords.longitude;
+      document.getElementById('gps-status').textContent='✅ GPS ativo ('+userLat.toFixed(4)+', '+userLon.toFixed(4)+')';
+      if(userMarker)map.removeLayer(userMarker);
+      if(userCircle)map.removeLayer(userCircle);
+      var raio=parseInt(document.getElementById('raio-slider').value);
+      userMarker=L.circleMarker([userLat,userLon],{{radius:10,fillColor:'#FF6600',color:'#fff',weight:3,fillOpacity:1}}).bindPopup('📍 Você está aqui').addTo(map);
+      userCircle=L.circle([userLat,userLon],{{radius:raio*1000,color:'#FF6600',fillColor:'#FF6600',fillOpacity:0.07,weight:2,dashArray:'6,4'}}).addTo(map);
+      map.flyTo([userLat,userLon],11,{{duration:1}});
+      filterAndRender();
+    }},
+    function(){{document.getElementById('gps-status').textContent='❌ Não foi possível obter localização.';}},
+    {{enableHighAccuracy:true,timeout:10000}}
+  );
+}});
+
+document.getElementById('raio-slider').addEventListener('input',function(){{
+  var raio=parseInt(this.value);
+  document.getElementById('raio-val').textContent=raio+' km';
+  if(userLat!==null&&userCircle)userCircle.setRadius(raio*1000);
+  filterAndRender();
+}});
+
+document.getElementById('search-box').addEventListener('input',filterAndRender);
+
+function toggleHeat(){{
+  if(!heatVisible){{
+    var d=CLIENTES.map(function(c){{return[c.lat,c.lon,Math.min(c.vol/10,1.0)];}});
+    heatLayer=L.heatLayer(d,{{radius:30,blur:25,maxZoom:13}}).addTo(map);
+    heatVisible=true;
+    document.getElementById('toggle-heat').textContent='❄️ Mapa Normal';
+  }}else{{
+    if(heatLayer)map.removeLayer(heatLayer);
+    heatVisible=false;
+    document.getElementById('toggle-heat').textContent='🔥 Mapa de Calor';
+  }}
+}}
+
+filterAndRender();
+</script>
+</body>
+</html>"""
+
+    st.components.v1.html(mapa_html, height=580, scrolling=False)
+
+    # Verificar redirect do mapa para busca
+    if st.session_state.get("mapa_redirect_cnpj"):
+        cnpj_redirect = st.session_state.pop("mapa_redirect_cnpj")
+        st.session_state["busca_q"] = cnpj_redirect
+        st.session_state["busca_cnpj_sel"] = cnpj_redirect
+        st.session_state.pagina = "busca"
+        st.rerun()
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.info("💡 **Dica:** No popup de cada cliente, clique em **🔍 Ver Dados do Cliente** para acessar o histórico completo na aba Busca. Para navegar use os botões de rota que abrem o GPS direto no celular.")
+
+    with st.expander(f"📋 Lista completa ({total_geo} clientes no mapa)", expanded=False):
+        cols_show = [c for c in ["NOMEPROPRIETARIO","CPFCNPJPROPRIETARIO","NO_CIDADE","Modelo","volume","em_carteira"] if c in df_plot_geo.columns]
+        df_show = df_plot_geo[cols_show].copy()
+        rename_m = {"NOMEPROPRIETARIO":"Cliente","CPFCNPJPROPRIETARIO":"CNPJ","NO_CIDADE":"Cidade","Modelo":"Último Modelo","volume":"Emplacamentos","em_carteira":"Na Carteira"}
+        df_show.columns = [rename_m.get(c, c) for c in cols_show]
+        if "Na Carteira" in df_show.columns:
+            df_show["Na Carteira"] = df_show["Na Carteira"].apply(lambda x: "✅ Sim" if x else "⚠️ Não")
+        st.dataframe(df_show, use_container_width=True, hide_index=True)
+        buf_m = BytesIO()
+        df_show.to_excel(buf_m, index=False, engine="openpyxl")
+        buf_m.seek(0)
+        st.download_button("📥 Exportar lista", buf_m, file_name="clientes_mapa.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 st.markdown('</div>', unsafe_allow_html=True)
