@@ -110,5 +110,12 @@
     "nome": "Robson Andre",
     "consultor_key": "RENATA BELLON",
     "ultimo_acesso": "2026-06-18T15:41:03"
+  },
+  "REGIANE": {
+    "senha_hash": "560a150cdff7699d1027c07ad0d6c4effbbf42d9bfcf32a6e3d87c8ac2100f13",
+    "perfil": "vendedor",
+    "nome": "REGIANE INAMORATO",
+    "consultor_key": "RENATA BELLON",
+    "ultimo_acesso": null
   }
 }
