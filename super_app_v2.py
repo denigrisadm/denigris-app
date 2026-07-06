@@ -368,6 +368,67 @@ def safe_str(v, fallback="—"):
     s = str(v).strip() if not pd.isna(v) else ""
     return fallback if s in ["nan","None","NaN","","NAN"] else s
 
+# ════════════════════════════════════════════════════════════════
+# GEOCODIFICAÇÃO POR CEP — endereço real do cliente (com cache em disco)
+# ════════════════════════════════════════════════════════════════
+CEP_CACHE_FILE = os.path.join(DATA_DIR, "cep_coords_cache.json")
+
+def _load_cep_cache():
+    if os.path.exists(CEP_CACHE_FILE):
+        try:
+            with open(CEP_CACHE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def _save_cep_cache(cache):
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(CEP_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+def geocode_cep(cep_norm):
+    """Geocodifica um CEP (8 dígitos) via Nominatim/OpenStreetMap → (lat, lon) ou None.
+    Respeita a política de uso do Nominatim (1 req/s, User-Agent identificado)."""
+    if not cep_norm or len(cep_norm) != 8:
+        return None
+    import urllib.request, urllib.parse as _up
+    cep_fmt = f"{cep_norm[:5]}-{cep_norm[5:]}"
+    url = ("https://nominatim.openstreetmap.org/search?"
+           + _up.urlencode({"postalcode": cep_fmt, "country": "Brazil", "format": "json", "limit": 1}))
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "SuperApp-DeNigris/1.0 (uso interno)"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data = json.loads(r.read().decode())
+        if data:
+            return (float(data[0]["lat"]), float(data[0]["lon"]))
+    except Exception:
+        pass
+    return None
+
+def geocodificar_ceps_pendentes(ceps_unicos, limite=60):
+    """Geocodifica até `limite` CEPs ainda não cacheados nesta chamada (evita travar a página).
+    Retorna (cache_atualizado, quantos_geocodificados_agora, quantos_ainda_faltam)."""
+    import time
+    cache = _load_cep_cache()
+    pendentes = [c for c in ceps_unicos if c and c not in cache]
+    feitos = 0
+    progress = st.progress(0.0, text="Buscando coordenadas exatas...")
+    for i, cep in enumerate(pendentes[:limite]):
+        coords = geocode_cep(cep)
+        cache[cep] = coords  # guarda None também, pra não tentar de novo o mesmo CEP toda hora
+        feitos += 1
+        progress.progress((i + 1) / min(len(pendentes), limite), text=f"Buscando coordenadas exatas... ({i+1}/{min(len(pendentes), limite)})")
+        if i < len(pendentes[:limite]) - 1:
+            time.sleep(1.0)  # respeita limite de 1 req/s do Nominatim
+    progress.empty()
+    _save_cep_cache(cache)
+    faltam = max(len(pendentes) - limite, 0)
+    return cache, feitos, faltam
+
 def safe_atividade(d):
     s = safe_str(d.get("ATIVIDADE_ECONOMICA",""))
     return (s[:90]+"...") if len(s) > 90 else s
@@ -3194,6 +3255,17 @@ elif pagina == "mapa":
         c = norm_str(str(cidade_str))
         return COORDS_CIDADES.get(c)
 
+    def _haversine_km(lat1, lon1, lat2, lon2):
+        from math import radians, sin, cos, atan2, sqrt
+        R = 6371.0
+        p1, p2 = radians(lat1), radians(lat2)
+        dphi = radians(lat2 - lat1)
+        dlmb = radians(lon2 - lon1)
+        a = sin(dphi/2)**2 + cos(p1)*cos(p2)*sin(dlmb/2)**2
+        return R * 2 * atan2(sqrt(a), sqrt(1-a))
+
+    _HQ_LAT, _HQ_LON = COORDS_CIDADES["SAO BERNARDO DO CAMPO"]  # sede De Nigris
+
     # ── Filtrar base ──
     cnpjs_carteira = set(df_cart["CNPJ_NORM"].dropna().tolist()) if df_cart is not None else set()
 
@@ -3243,15 +3315,54 @@ elif pagina == "mapa":
         mask_cnpj_m = df_plot["CNPJ_NORM"].str.startswith(q_cnpj_m) if q_cnpj_m else pd.Series(False, index=df_plot.index)
         df_plot = df_plot[mask_nome_m | mask_cnpj_m]
 
-    # Geocodificar
-    df_plot["_coords"] = df_plot["NO_CIDADE"].apply(_coords_cidade)
+    # ── Geocodificar: prioriza endereço exato (CEP), cai para cidade quando não disponível ──
+    _cep_cache = _load_cep_cache()
+
+    def _coords_cliente(row):
+        cep = row.get("CEP_norm", "")
+        if cep and cep in _cep_cache and _cep_cache[cep]:
+            return tuple(_cep_cache[cep])
+        return _coords_cidade(row.get("NO_CIDADE", ""))
+
+    df_plot["_coords"] = df_plot.apply(_coords_cliente, axis=1)
+    df_plot["_endereco_exato"] = df_plot.apply(
+        lambda r: bool(r.get("CEP_norm") and r["CEP_norm"] in _cep_cache and _cep_cache[r["CEP_norm"]]), axis=1
+    )
+
+    # ── Botão para buscar endereços exatos dos clientes ainda sem geocodificação por CEP ──
+    _ceps_sem_geo = sorted(set(
+        df_plot.loc[~df_plot["_endereco_exato"], "CEP_norm"].dropna().tolist()
+    ) - set(c for c, v in _cep_cache.items() if v is None))  # não repete CEP que já falhou
+    _ceps_sem_geo = [c for c in _ceps_sem_geo if c and len(c) == 8]
+    if _ceps_sem_geo:
+        col_geo1, col_geo2 = st.columns([3, 2])
+        with col_geo1:
+            st.caption(f"📍 {len(_ceps_sem_geo)} cliente(s) exibidos apenas pelo centro da cidade (endereço exato ainda não buscado).")
+        with col_geo2:
+            if st.button(f"🎯 Buscar endereço exato ({min(len(_ceps_sem_geo), 60)} agora)", use_container_width=True, key="btn_geocode_cep"):
+                _cache_novo, _feitos, _faltam = geocodificar_ceps_pendentes(_ceps_sem_geo, limite=60)
+                st.session_state["_mapa_sig"] = None  # força reconstruir o mapa com as novas coordenadas
+                if _faltam:
+                    st.success(f"✅ {_feitos} endereço(s) geocodificado(s). Ainda faltam {_faltam} — clique de novo para continuar.")
+                else:
+                    st.success(f"✅ {_feitos} endereço(s) geocodificado(s). Todos os visíveis agora têm endereço exato!")
+                st.rerun()
+
+    df_plot_sem_geo = df_plot[df_plot["_coords"].isna()]
     df_plot_geo = df_plot[df_plot["_coords"].notna()].copy()
     df_plot_geo["_lat"] = df_plot_geo["_coords"].apply(lambda x: x[0])
     df_plot_geo["_lon"] = df_plot_geo["_coords"].apply(lambda x: x[1])
 
+    # ── Filtro de Raio (agora funcional) — distância da sede (São Bernardo do Campo) ──
+    df_plot_geo["_dist_km"] = df_plot_geo.apply(
+        lambda r: _haversine_km(_HQ_LAT, _HQ_LON, r["_lat"], r["_lon"]), axis=1
+    )
+    fora_raio = int((df_plot_geo["_dist_km"] > raio_km).sum())
+    df_plot_geo = df_plot_geo[df_plot_geo["_dist_km"] <= raio_km].copy()
+
     total_encontrados = len(df_plot)
     total_geo = len(df_plot_geo)
-    sem_coords = total_encontrados - total_geo
+    sem_coords = len(df_plot_sem_geo)
 
     # KPIs
     kc1, kc2, kc3, kc4 = st.columns(4)
@@ -3271,6 +3382,8 @@ elif pagina == "mapa":
 
     if sem_coords > 0:
         st.caption(f"ℹ️ {sem_coords} cliente(s) ocultados — cidade não mapeada.")
+    if fora_raio > 0:
+        st.caption(f"ℹ️ {fora_raio} cliente(s) ocultados — fora do raio de {raio_km} km selecionado.")
 
     if df_plot_geo.empty:
         st.info("Nenhum cliente encontrado para os filtros selecionados.")
@@ -3290,6 +3403,7 @@ elif pagina == "mapa":
         lat_c    = float(row["_lat"])
         lon_c    = float(row["_lon"])
         em_cart  = bool(row.get("em_carteira", False))
+        exato_c  = bool(row.get("_endereco_exato", False))
 
         if em_cart:
             cor = "#1E7E34"
@@ -3300,9 +3414,15 @@ elif pagina == "mapa":
         else:
             cor = "#1565C0"
 
-        addr_enc  = _urlp_m.quote(f"{nome_c}, {cidade_c}, Brasil")
-        gmaps_url = f"https://www.google.com/maps/search/?api=1&query={addr_enc}"
-        waze_url  = f"https://waze.com/ul?q={addr_enc}"
+        if exato_c:
+            # Endereço exato (via CEP) — manda coordenada direta, o Waze/Maps já traça a rota
+            gmaps_url = f"https://www.google.com/maps/search/?api=1&query={lat_c},{lon_c}"
+            waze_url  = f"https://waze.com/ul?ll={lat_c},{lon_c}&navigate=yes"
+        else:
+            # Sem endereço exato ainda — busca por nome + cidade (aproximado)
+            addr_enc  = _urlp_m.quote(f"{nome_c}, {cidade_c}, Brasil")
+            gmaps_url = f"https://www.google.com/maps/search/?api=1&query={addr_enc}"
+            waze_url  = f"https://waze.com/ul?q={addr_enc}"
 
         clientes_json.append({
             "nome": nome_c,
@@ -3315,6 +3435,7 @@ elif pagina == "mapa":
             "lon": lon_c,
             "cor": cor,
             "em_cart": em_cart,
+            "exato": exato_c,
             "gmaps": gmaps_url,
             "waze": waze_url,
             "status_label": "✅ Cadastrado" if em_cart else "⚠️ Não Cadastrado",
@@ -3345,49 +3466,75 @@ elif pagina == "mapa":
     else:
         modo_calor = False
 
-    # Construir mapa Folium
-    m = folium.Map(
-        location=[centro_lat, centro_lon],
-        zoom_start=10,
-        tiles="CartoDB positron",
-        prefer_canvas=True,
-    )
+    # ── Cache do mapa: só reconstrói quando os dados realmente mudam ──
+    # (evita reprocessar milhares de marcadores a cada clique em qualquer widget da página)
+    _mapa_sig = hashlib.md5(
+        ("|".join(sorted(f"{c['cnpj_norm']}" for c in clientes_json))
+         + f"|calor={modo_calor}|raio={raio_km}").encode()
+    ).hexdigest()
 
-    if modo_calor:
-        # Mapa de calor — peso = volume normalizado
-        from folium.plugins import HeatMap
-        heat_data = [[c["lat"], c["lon"], min(c["vol"] / 10.0, 1.0)] for c in clientes_json]
-        HeatMap(heat_data, radius=30, blur=25, max_zoom=13).add_to(m)
+    if st.session_state.get("_mapa_sig") == _mapa_sig and st.session_state.get("_mapa_obj") is not None:
+        m = st.session_state["_mapa_obj"]
     else:
-        # Marcadores por cluster de cidade para performance
-        import urllib.parse as _urlp_m
-        for c in clientes_json:
-            raio_marcador = min(6 + c["vol"] * 0.7, 18)
-            popup_html = f"""
-<div style="width:240px;font-family:'Segoe UI',sans-serif;">
+        # Construir mapa Folium
+        m = folium.Map(
+            location=[centro_lat, centro_lon],
+            zoom_start=10,
+            tiles="CartoDB positron",
+            prefer_canvas=True,
+        )
+
+        if modo_calor:
+            # Mapa de calor — peso = volume normalizado (mantém granularidade por cliente)
+            from folium.plugins import HeatMap
+            heat_data = [[c["lat"], c["lon"], min(c["vol"] / 10.0, 1.0)] for c in clientes_json]
+            HeatMap(heat_data, radius=30, blur=25, max_zoom=13).add_to(m)
+        else:
+            # ── Marcador individual por cliente, agrupado por um MarkerCluster real do Leaflet ──
+            # Cada cliente aparece no seu próprio marcador (endereço exato quando já geocodificado
+            # por CEP, ou centro da cidade como aproximação). O MarkerCluster junta visualmente os
+            # marcadores próximos quando o mapa está com zoom afastado (mostrando só a contagem) e
+            # os separa automaticamente ao aproximar o zoom — é isso que evita o travamento com
+            # muitos clientes, sem esconder ninguém individualmente.
+            from folium.plugins import MarkerCluster
+            cluster = MarkerCluster(name="Clientes").add_to(m)
+
+            for c in clientes_json:
+                if c["em_cart"]:
+                    icon_color, icon_name = "green", "ok-sign"
+                elif c["vol"] >= 10:
+                    icon_color, icon_name = "darkred", "exclamation-sign"
+                elif c["vol"] >= 5:
+                    icon_color, icon_name = "red", "exclamation-sign"
+                else:
+                    icon_color, icon_name = "blue", "info-sign"
+
+                selo_endereco = "📍 Endereço exato" if c["exato"] else "🏙️ Aproximado (centro da cidade)"
+
+                popup_html = f"""
+<div style="width:250px;font-family:'Segoe UI',sans-serif;">
   <div style="font-size:13px;font-weight:700;color:#0a1628;margin-bottom:3px;">{c['nome']}</div>
   <div style="font-size:10px;color:#8a95b0;font-family:monospace;margin-bottom:5px;">{c['cnpj']}</div>
   <span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;margin-bottom:7px;background:{c['status_color']}22;color:{c['status_color']};">{c['status_label']}</span>
   <div style="font-size:11px;color:#4a5568;margin-bottom:2px;">📍 <b>Cidade:</b> {c['cidade']}</div>
   <div style="font-size:11px;color:#4a5568;margin-bottom:2px;">🚚 <b>Últ. Modelo:</b> {c['modelo']}</div>
-  <div style="font-size:11px;color:#4a5568;margin-bottom:8px;">📦 <b>Emplacamentos:</b> {c['vol']}</div>
+  <div style="font-size:11px;color:#4a5568;margin-bottom:6px;">📦 <b>Emplacamentos:</b> {c['vol']}</div>
+  <div style="font-size:10px;color:#8a95b0;margin-bottom:8px;">{selo_endereco}</div>
   <div style="display:flex;gap:5px;margin-bottom:5px;">
-    <a href="{c['gmaps']}" target="_blank" style="flex:1;padding:6px 4px;background:#e8f0ff;color:#1a73e8;border-radius:6px;text-align:center;font-size:11px;font-weight:700;text-decoration:none;">🗺️ Google Maps</a>
-    <a href="{c['waze']}" target="_blank" style="flex:1;padding:6px 4px;background:#f0eaff;color:#7c3aed;border-radius:6px;text-align:center;font-size:11px;font-weight:700;text-decoration:none;">🚗 Waze</a>
+    <a href="{c['gmaps']}" target="_blank" style="flex:1;padding:8px 4px;background:#e8f0ff;color:#1a73e8;border-radius:6px;text-align:center;font-size:12px;font-weight:700;text-decoration:none;">🗺️ Google Maps</a>
+    <a href="{c['waze']}" target="_blank" style="flex:1;padding:8px 4px;background:#f0eaff;color:#7c3aed;border-radius:6px;text-align:center;font-size:12px;font-weight:700;text-decoration:none;">🚗 Waze</a>
   </div>
   <div style="font-size:10px;color:#8a95b0;text-align:center;">CNPJ para busca: <b>{c['cnpj_norm']}</b></div>
 </div>"""
-            folium.CircleMarker(
-                location=[c["lat"], c["lon"]],
-                radius=raio_marcador,
-                color="#ffffff",
-                weight=2,
-                fill=True,
-                fill_color=c["cor"],
-                fill_opacity=0.85,
-                popup=folium.Popup(popup_html, max_width=260),
-                tooltip=f"{c['nome']} · {c['vol']} empl.",
-            ).add_to(m)
+                folium.Marker(
+                    location=[c["lat"], c["lon"]],
+                    icon=folium.Icon(color=icon_color, icon=icon_name),
+                    popup=folium.Popup(popup_html, max_width=270),
+                    tooltip=f"{c['nome']} · {c['vol']} empl.",
+                ).add_to(cluster)
+
+        st.session_state["_mapa_obj"] = m
+        st.session_state["_mapa_sig"] = _mapa_sig
 
     # Renderizar o mapa
     map_data = st_folium(m, width="100%", height=560, returned_objects=[], key="folium_mapa")
