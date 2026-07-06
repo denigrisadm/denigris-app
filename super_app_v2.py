@@ -457,12 +457,16 @@ def _gh_put_file(api_url, token, branch, content_bytes, sha, message="update use
     """PUT na API do GitHub. Retorna True se ok."""
     import urllib.request
     try:
-        payload = json.dumps({
+        payload_dict = {
             "message": message,
             "content": base64.b64encode(content_bytes).decode(),
-            "sha": sha,
             "branch": branch
-        }).encode()
+        }
+        # Só inclui "sha" quando o arquivo já existe — enviar sha="" na criação
+        # de um arquivo novo faz a API do GitHub rejeitar o PUT (422).
+        if sha:
+            payload_dict["sha"] = sha
+        payload = json.dumps(payload_dict).encode()
         req = urllib.request.Request(
             api_url, data=payload, method="PUT",
             headers={"Authorization": f"token {token}",
@@ -1369,9 +1373,10 @@ if pagina == "busca":
 
             cnpjs = resultados["CNPJ_NORM"].unique()
             if len(cnpjs) == 0:
+                # Nenhum resultado — evita IndexError ao acessar cnpjs[0] mais abaixo
                 st.warning("Nenhum cliente encontrado.")
-
-            if len(cnpjs) > 1:
+                cnpj_sel = None
+            elif len(cnpjs) > 1:
                 opts = []
                 for cn in cnpjs[:20]:
                     sub = df_emp[df_emp["CNPJ_NORM"] == cn]
@@ -1384,16 +1389,17 @@ if pagina == "busca":
             else:
                 cnpj_sel = cnpjs[0]
 
-            st.session_state["busca_cnpj_sel"] = cnpj_sel
-            st.session_state["busca_linha_placa"] = None
-            edf = df_emp[df_emp["CNPJ_NORM"] == cnpj_sel].copy()
-            esrt = edf.sort_values("Data emplacamento", ascending=False)
-            last = esrt.iloc[0].to_dict()
-            total_emp = len(edf)
-            datas = edf["Data emplacamento"].dropna().tolist()
-            pred_label, pred_date = calc_prediction(datas)
-            nigris_cnt = int(is_denigris(edf["Concessionário"]).sum())
-            _mostrar_resultado = True
+            if cnpj_sel is not None:
+                st.session_state["busca_cnpj_sel"] = cnpj_sel
+                st.session_state["busca_linha_placa"] = None
+                edf = df_emp[df_emp["CNPJ_NORM"] == cnpj_sel].copy()
+                esrt = edf.sort_values("Data emplacamento", ascending=False)
+                last = esrt.iloc[0].to_dict()
+                total_emp = len(edf)
+                datas = edf["Data emplacamento"].dropna().tolist()
+                pred_label, pred_date = calc_prediction(datas)
+                nigris_cnt = int(is_denigris(edf["Concessionário"]).sum())
+                _mostrar_resultado = True
 
     if _mostrar_resultado:
         # Dados da carteira
