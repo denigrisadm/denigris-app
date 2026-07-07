@@ -1811,44 +1811,74 @@ if pagina == "busca":
             cnpj_fmt = f"{cnpj_rf[:2]}.{cnpj_rf[2:5]}.{cnpj_rf[5:8]}/{cnpj_rf[8:12]}-{cnpj_rf[12:14]}" if len(cnpj_rf)==14 else cnpj_rf
 
             def _consultar_cnpj(cnpj14):
-                """Consulta CNPJ.ws com fallback para BrasilAPI."""
-                for url in [
+                """Consulta CNPJ.ws → BrasilAPI → ReceitaWS (nessa ordem), com 1 nova tentativa
+                por fonte em caso de falha transitória (timeout/instabilidade)."""
+                import time
+                fontes = [
                     f"https://publica.cnpj.ws/cnpj/{cnpj14}",
-                    f"https://brasilapi.com.br/api/cnpj/v1/{cnpj14}"
-                ]:
-                    try:
-                        req = _ur.Request(url, headers={"User-Agent":"Mozilla/5.0"})
-                        with _ur.urlopen(req, timeout=12) as r:
-                            return json.loads(r.read().decode()), ""
-                    except _ue.HTTPError as e:
-                        err = f"HTTP {e.code}"
-                    except Exception as e:
-                        err = str(e)
+                    f"https://brasilapi.com.br/api/cnpj/v1/{cnpj14}",
+                    f"https://www.receitaws.com.br/v1/cnpj/{cnpj14}",
+                ]
+                err = "Falha desconhecida"
+                for url in fontes:
+                    for tentativa in range(2):  # 1ª tentativa + 1 retry
+                        try:
+                            req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                            with _ur.urlopen(req, timeout=15) as r:
+                                data = json.loads(r.read().decode())
+                            # ReceitaWS retorna status="ERROR" com corpo 200 quando o CNPJ não existe
+                            if isinstance(data, dict) and data.get("status") == "ERROR":
+                                err = data.get("message", "CNPJ não encontrado")
+                                break  # não adianta tentar de novo na mesma fonte
+                            return data, ""
+                        except _ue.HTTPError as e:
+                            if e.code == 429:
+                                err = "Limite de consultas da API pública atingido (aguarde ~1 min e tente de novo)"
+                            elif e.code == 404:
+                                err = "CNPJ não encontrado nessa base"
+                                break  # 404 não muda com retry, pula pra próxima fonte
+                            else:
+                                err = f"HTTP {e.code}"
+                        except Exception as e:
+                            err = f"Instabilidade na conexão ({type(e).__name__})"
+                        if tentativa == 0:
+                            time.sleep(1.5)  # espera curta antes do retry
                 return None, err
 
             def _parse_rf(d):
-                """Extrai campos normalizados do JSON (compatível cnpj.ws e brasilapi)."""
+                """Extrai campos normalizados do JSON (compatível cnpj.ws, brasilapi e receitaws)."""
                 est = d.get("estabelecimento", d)
-                def sv(v, fb="—"):
+                def sv(v, fb=""):
                     if isinstance(v,dict): return v.get("descricao") or v.get("nome") or fb
                     return str(v).strip() if v and str(v).strip() not in ["None","nan",""] else fb
-                razao    = sv(d.get("razao_social"))
-                fantasia = sv(est.get("nome_fantasia") or d.get("nome_fantasia",""))
-                situacao = sv(est.get("situacao_cadastral") or d.get("situacao",""))
-                abertura = sv(est.get("data_inicio_atividade") or d.get("abertura",""))
-                capital  = sv(d.get("capital_social",""))
-                porte    = sv(d.get("porte",""))
-                nat_jur  = sv(d.get("natureza_juridica",""))
+                razao    = sv(d.get("razao_social") or d.get("nome"), "—")
+                fantasia = sv(est.get("nome_fantasia") or d.get("nome_fantasia") or d.get("fantasia",""), "—")
+                situacao = sv(est.get("situacao_cadastral") or d.get("situacao",""), "—")
+                abertura = sv(est.get("data_inicio_atividade") or d.get("abertura",""), "—")
+                capital  = sv(d.get("capital_social",""), "—")
+                porte    = sv(d.get("porte",""), "—")
+                nat_jur  = sv(d.get("natureza_juridica",""), "—")
                 atv_raw  = est.get("atividade_principal") or d.get("atividade_principal",{})
-                if isinstance(atv_raw,dict):   atividade = f"{sv(atv_raw.get('subclasse',''))} — {sv(atv_raw.get('descricao',''))}"
+                if isinstance(atv_raw,dict):   atividade = f"{sv(atv_raw.get('subclasse',''),'—')} — {sv(atv_raw.get('descricao',''),'—')}"
                 elif isinstance(atv_raw,list) and atv_raw: atividade = atv_raw[0].get("text", atv_raw[0].get("descricao","—"))
                 else: atividade = "—"
-                end_rf   = " ".join(filter(None,[sv(est.get("tipo_logradouro","")),sv(est.get("logradouro","")),
-                                                  sv(est.get("numero","")),sv(est.get("complemento","")),
-                                                  sv(est.get("bairro",""))])).strip() or "—"
-                cidade_rf = sv(est.get("cidade",{}) or est.get("municipio",""))
-                uf_rf    = sv(est.get("estado",{}) or est.get("uf",""))
-                cep_rf   = sv(est.get("cep",""))
+
+                # ── Endereço: monta com pontuação correta, sem inserir "—" pra campo vazio ──
+                tipo_l = sv(est.get("tipo_logradouro",""))
+                logr   = sv(est.get("logradouro",""))
+                numero = sv(est.get("numero",""))
+                compl  = sv(est.get("complemento",""))
+                bairro = sv(est.get("bairro",""))
+                if len(compl) > 60:  # complemento vindo "sujo" da Receita — trunca pra não quebrar o card
+                    compl = compl[:60].rstrip() + "…"
+                rua = " ".join(p for p in [tipo_l, logr] if p).strip()
+                linha1 = ", ".join(p for p in [rua, numero] if p) or "—"
+                linha2 = ", ".join(p for p in [compl, bairro] if p)
+                end_rf = linha1 + (f" — {linha2}" if linha2 else "")
+
+                cidade_rf = sv(est.get("cidade",{}) or est.get("municipio",""), "—")
+                uf_rf    = sv(est.get("estado",{}) or est.get("uf",""), "—")
+                cep_rf   = sv(est.get("cep",""), "—")
                 socios   = d.get("socios") or d.get("qsa") or est.get("socios",[]) or []
                 return dict(razao=razao,fantasia=fantasia,situacao=situacao,abertura=abertura,
                             capital=capital,porte=porte,nat_jur=nat_jur,atividade=atividade,
