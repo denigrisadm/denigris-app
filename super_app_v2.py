@@ -369,65 +369,111 @@ def safe_str(v, fallback="—"):
     return fallback if s in ["nan","None","NaN","","NAN"] else s
 
 # ════════════════════════════════════════════════════════════════
-# GEOCODIFICAÇÃO POR CEP — endereço real do cliente (com cache em disco)
+# GEOCODIFICAÇÃO POR ENDEREÇO — pino exatamente na rua do cliente (com cache em disco)
+# Usa as colunas de endereço da planilha EMPLACAMENTOS (logradouro, número,
+# complemento, bairro, cidade, UF, CEP) em vez de só o centro da cidade.
 # ════════════════════════════════════════════════════════════════
-CEP_CACHE_FILE = os.path.join(DATA_DIR, "cep_coords_cache.json")
+ENDERECO_CACHE_FILE = os.path.join(DATA_DIR, "endereco_coords_cache.json")
 
-def _load_cep_cache():
-    if os.path.exists(CEP_CACHE_FILE):
+def _load_endereco_cache():
+    if os.path.exists(ENDERECO_CACHE_FILE):
         try:
-            with open(CEP_CACHE_FILE, "r", encoding="utf-8") as f:
+            with open(ENDERECO_CACHE_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             return {}
     return {}
 
-def _save_cep_cache(cache):
+def _save_endereco_cache(cache):
     try:
         os.makedirs(DATA_DIR, exist_ok=True)
-        with open(CEP_CACHE_FILE, "w", encoding="utf-8") as f:
+        with open(ENDERECO_CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(cache, f, ensure_ascii=False)
     except Exception:
         pass
 
-def geocode_cep(cep_norm):
-    """Geocodifica um CEP (8 dígitos) via Nominatim/OpenStreetMap → (lat, lon) ou None.
+def montar_endereco_cliente(row):
+    """Monta o endereço completo do cliente a partir das colunas da planilha EMPLACAMENTOS
+    (logradouro/número/complemento/bairro/cidade/UF/CEP)."""
+    logr_parts = [safe_str(row.get(c, ""), "") for c in ["TP_LOGR", "NO_LOGR", "NU_LOGR"]]
+    logr = " ".join(p for p in logr_parts if p and p != "—").strip()
+    compl = safe_str(row.get("NO_COMPL", ""), "")
+    bairro = safe_str(row.get("NO_BAIRRO", ""), "")
+    cidade = safe_str(row.get("NO_CIDADE", ""), "")
+    uf = safe_str(row.get("SG_ESTADO", ""), "")
+    cep = norm_cep(row.get("NU_CEP", ""))
+    cep_fmt = f"{cep[:5]}-{cep[5:]}" if len(cep) == 8 else ""
+    partes = [logr, compl, bairro, cidade, uf, cep_fmt, "Brasil"]
+    return ", ".join(p for p in partes if p and p != "—")
+
+def geocode_endereco(row):
+    """Geocodifica o endereço completo do cliente via Nominatim/OpenStreetMap → (lat, lon) ou None.
+    Tenta busca estruturada (rua+número+cidade+UF+CEP) primeiro — mais precisa — e cai para
+    busca livre pelo texto completo se a estruturada não achar nada.
     Respeita a política de uso do Nominatim (1 req/s, User-Agent identificado)."""
-    if not cep_norm or len(cep_norm) != 8:
-        return None
     import urllib.request, urllib.parse as _up
-    cep_fmt = f"{cep_norm[:5]}-{cep_norm[5:]}"
-    url = ("https://nominatim.openstreetmap.org/search?"
-           + _up.urlencode({"postalcode": cep_fmt, "country": "Brazil", "format": "json", "limit": 1}))
-    try:
+
+    logr_parts = [safe_str(row.get(c, ""), "") for c in ["TP_LOGR", "NO_LOGR"]]
+    logr_nome = " ".join(p for p in logr_parts if p and p != "—").strip()
+    numero = safe_str(row.get("NU_LOGR", ""), "")
+    cidade = safe_str(row.get("NO_CIDADE", ""), "")
+    uf = safe_str(row.get("SG_ESTADO", ""), "")
+    cep = norm_cep(row.get("NU_CEP", ""))
+    cep_fmt = f"{cep[:5]}-{cep[5:]}" if len(cep) == 8 else ""
+
+    def _buscar(params):
+        url = "https://nominatim.openstreetmap.org/search?" + _up.urlencode(params)
         req = urllib.request.Request(url, headers={"User-Agent": "SuperApp-DeNigris/1.0 (uso interno)"})
         with urllib.request.urlopen(req, timeout=8) as r:
             data = json.loads(r.read().decode())
         if data:
             return (float(data[0]["lat"]), float(data[0]["lon"]))
-    except Exception:
-        pass
+        return None
+
+    # 1) Busca estruturada: rua + número (mais precisa quando disponível)
+    if logr_nome and cidade:
+        try:
+            street = f"{numero} {logr_nome}".strip() if numero and numero != "—" else logr_nome
+            r = _buscar({"street": street, "city": cidade, "state": uf, "postalcode": cep_fmt,
+                         "country": "Brazil", "format": "json", "limit": 1})
+            if r:
+                return r
+        except Exception:
+            pass
+
+    # 2) Fallback: busca livre pelo endereço completo
+    endereco = montar_endereco_cliente(row)
+    if endereco:
+        try:
+            r = _buscar({"q": endereco, "format": "json", "limit": 1})
+            if r:
+                return r
+        except Exception:
+            pass
+
     return None
 
-def geocodificar_ceps_pendentes(ceps_unicos, limite=60):
-    """Geocodifica até `limite` CEPs ainda não cacheados nesta chamada (evita travar a página).
-    Retorna (cache_atualizado, quantos_geocodificados_agora, quantos_ainda_faltam)."""
+def geocodificar_enderecos_pendentes(rows_pendentes, limite=60):
+    """Geocodifica até `limite` clientes ainda sem coordenada exata (evita travar a página).
+    `rows_pendentes` é uma lista de dicts com {"cnpj_norm": ..., "row": <dict da linha>}.
+    Retorna (feitos, faltam)."""
     import time
-    cache = _load_cep_cache()
-    pendentes = [c for c in ceps_unicos if c and c not in cache]
+    cache = _load_endereco_cache()
+    pendentes = [p for p in rows_pendentes if p["cnpj_norm"] not in cache]
     feitos = 0
-    progress = st.progress(0.0, text="Buscando coordenadas exatas...")
-    for i, cep in enumerate(pendentes[:limite]):
-        coords = geocode_cep(cep)
-        cache[cep] = coords  # guarda None também, pra não tentar de novo o mesmo CEP toda hora
+    total = min(len(pendentes), limite)
+    progress = st.progress(0.0, text="Buscando endereço exato...")
+    for i, p in enumerate(pendentes[:limite]):
+        coords = geocode_endereco(p["row"])
+        cache[p["cnpj_norm"]] = coords  # guarda None também, pra não tentar de novo o mesmo cliente toda hora
         feitos += 1
-        progress.progress((i + 1) / min(len(pendentes), limite), text=f"Buscando coordenadas exatas... ({i+1}/{min(len(pendentes), limite)})")
-        if i < len(pendentes[:limite]) - 1:
+        progress.progress((i + 1) / total, text=f"Buscando endereço exato... ({i+1}/{total})")
+        if i < total - 1:
             time.sleep(1.0)  # respeita limite de 1 req/s do Nominatim
     progress.empty()
-    _save_cep_cache(cache)
+    _save_endereco_cache(cache)
     faltam = max(len(pendentes) - limite, 0)
-    return cache, feitos, faltam
+    return feitos, faltam
 
 def safe_atividade(d):
     s = safe_str(d.get("ATIVIDADE_ECONOMICA",""))
@@ -3285,7 +3331,7 @@ elif pagina == "mapa":
     df_mapa_clientes["volume"] = df_mapa_clientes["CNPJ_NORM"].map(vol_series).fillna(1).astype(int)
     df_mapa_clientes["em_carteira"] = df_mapa_clientes["CNPJ_NORM"].isin(cnpjs_carteira)
 
-    # ── Filtros ──
+    # ── Filtros (simplificado: mapa é só para prospecção — sempre NÃO cadastrados) ──
     st.markdown('<div class="sec-title">🔎 Filtros</div>', unsafe_allow_html=True)
     col_f1, col_f2 = st.columns([2, 1])
     with col_f1:
@@ -3294,19 +3340,7 @@ elif pagina == "mapa":
     with col_f2:
         raio_km = st.slider("📍 Raio (km)", min_value=1, max_value=200, value=50, step=1)
 
-    if perfil in ("gestor", "gerente"):
-        tipo_vis = st.radio("Exibir no mapa:", ["Apenas NÃO Cadastrados", "Apenas Cadastrados", "Todos"],
-                            horizontal=True, key="mapa_tipo")
-    else:
-        tipo_vis = "Apenas NÃO Cadastrados"
-
-    # Aplicar filtros
-    if tipo_vis == "Apenas NÃO Cadastrados":
-        df_plot = df_mapa_clientes[~df_mapa_clientes["em_carteira"]].copy()
-    elif tipo_vis == "Apenas Cadastrados":
-        df_plot = df_mapa_clientes[df_mapa_clientes["em_carteira"]].copy()
-    else:
-        df_plot = df_mapa_clientes.copy()
+    df_plot = df_mapa_clientes[~df_mapa_clientes["em_carteira"]].copy()
 
     if busca_mapa.strip():
         q_m = norm_str(busca_mapa.strip())
@@ -3315,32 +3349,34 @@ elif pagina == "mapa":
         mask_cnpj_m = df_plot["CNPJ_NORM"].str.startswith(q_cnpj_m) if q_cnpj_m else pd.Series(False, index=df_plot.index)
         df_plot = df_plot[mask_nome_m | mask_cnpj_m]
 
-    # ── Geocodificar: prioriza endereço exato (CEP), cai para cidade quando não disponível ──
-    _cep_cache = _load_cep_cache()
+    # ── Geocodificar: prioriza endereço exato (rua/número do cliente), cai para cidade quando não disponível ──
+    _end_cache = _load_endereco_cache()
 
     def _coords_cliente(row):
-        cep = row.get("CEP_norm", "")
-        if cep and cep in _cep_cache and _cep_cache[cep]:
-            return tuple(_cep_cache[cep])
+        cnpj_n = row.get("CNPJ_NORM", "")
+        if cnpj_n and cnpj_n in _end_cache and _end_cache[cnpj_n]:
+            return tuple(_end_cache[cnpj_n])
         return _coords_cidade(row.get("NO_CIDADE", ""))
 
     df_plot["_coords"] = df_plot.apply(_coords_cliente, axis=1)
-    df_plot["_endereco_exato"] = df_plot.apply(
-        lambda r: bool(r.get("CEP_norm") and r["CEP_norm"] in _cep_cache and _cep_cache[r["CEP_norm"]]), axis=1
+    df_plot["_endereco_exato"] = df_plot["CNPJ_NORM"].apply(
+        lambda cn: bool(cn and cn in _end_cache and _end_cache[cn])
     )
 
-    # ── Botão para buscar endereços exatos dos clientes ainda sem geocodificação por CEP ──
-    _ceps_sem_geo = sorted(set(
-        df_plot.loc[~df_plot["_endereco_exato"], "CEP_norm"].dropna().tolist()
-    ) - set(c for c, v in _cep_cache.items() if v is None))  # não repete CEP que já falhou
-    _ceps_sem_geo = [c for c in _ceps_sem_geo if c and len(c) == 8]
-    if _ceps_sem_geo:
+    # ── Botão para buscar endereço exato dos clientes ainda não geocodificados ──
+    # Só dispara quando o vendedor clica — nada roda automaticamente ao abrir a página.
+    _clientes_sem_geo = [
+        {"cnpj_norm": r["CNPJ_NORM"], "row": r.to_dict()}
+        for _, r in df_plot[~df_plot["_endereco_exato"]].iterrows()
+        if r["CNPJ_NORM"] and _end_cache.get(r["CNPJ_NORM"]) is not None  # não repete quem já falhou
+    ]
+    if _clientes_sem_geo:
         col_geo1, col_geo2 = st.columns([3, 2])
         with col_geo1:
-            st.caption(f"📍 {len(_ceps_sem_geo)} cliente(s) exibidos apenas pelo centro da cidade (endereço exato ainda não buscado).")
+            st.caption(f"📍 {len(_clientes_sem_geo)} cliente(s) exibidos apenas pelo centro da cidade (endereço exato ainda não buscado).")
         with col_geo2:
-            if st.button(f"🎯 Buscar endereço exato ({min(len(_ceps_sem_geo), 60)} agora)", use_container_width=True, key="btn_geocode_cep"):
-                _cache_novo, _feitos, _faltam = geocodificar_ceps_pendentes(_ceps_sem_geo, limite=60)
+            if st.button(f"🎯 Buscar endereço exato ({min(len(_clientes_sem_geo), 60)} agora)", use_container_width=True, key="btn_geocode_end"):
+                _feitos, _faltam = geocodificar_enderecos_pendentes(_clientes_sem_geo, limite=60)
                 st.session_state["_mapa_sig"] = None  # força reconstruir o mapa com as novas coordenadas
                 if _faltam:
                     st.success(f"✅ {_feitos} endereço(s) geocodificado(s). Ainda faltam {_faltam} — clique de novo para continuar.")
@@ -3365,16 +3401,13 @@ elif pagina == "mapa":
     sem_coords = len(df_plot_sem_geo)
 
     # KPIs
-    kc1, kc2, kc3, kc4 = st.columns(4)
+    kc1, kc2, kc3 = st.columns(3)
     with kc1:
-        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Clientes no Mapa</div><div class="kpi-value">{total_geo}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Clientes Não Cadastrados no Mapa</div><div class="kpi-value" style="color:#C0392B;">{total_geo}</div></div>', unsafe_allow_html=True)
     with kc2:
-        nao_cad = int((~df_plot_geo["em_carteira"]).sum())
-        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Não Cadastrados</div><div class="kpi-value" style="color:#C0392B;">{nao_cad}</div></div>', unsafe_allow_html=True)
+        n_exato = int(df_plot_geo["_endereco_exato"].sum()) if "_endereco_exato" in df_plot_geo.columns else 0
+        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Com Endereço Exato</div><div class="kpi-value" style="color:#1565C0;">{n_exato}/{total_geo}</div></div>', unsafe_allow_html=True)
     with kc3:
-        cad = int(df_plot_geo["em_carteira"].sum())
-        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Cadastrados</div><div class="kpi-value" style="color:#1E7E34;">{cad}</div></div>', unsafe_allow_html=True)
-    with kc4:
         vol_total = int(df_plot_geo["volume"].sum())
         st.markdown(f'<div class="kpi-card"><div class="kpi-label">Total Emplacamentos</div><div class="kpi-value">{vol_total}</div></div>', unsafe_allow_html=True)
 
@@ -3404,6 +3437,7 @@ elif pagina == "mapa":
         lon_c    = float(row["_lon"])
         em_cart  = bool(row.get("em_carteira", False))
         exato_c  = bool(row.get("_endereco_exato", False))
+        endereco_c = montar_endereco_cliente(row) or cidade_c
 
         if em_cart:
             cor = "#1E7E34"
@@ -3429,6 +3463,7 @@ elif pagina == "mapa":
             "cnpj": cnpj_c,
             "cnpj_norm": cnpj_n,
             "cidade": cidade_c,
+            "endereco": endereco_c,
             "modelo": modelo_c,
             "vol": vol_c,
             "lat": lat_c,
@@ -3516,7 +3551,8 @@ elif pagina == "mapa":
   <div style="font-size:13px;font-weight:700;color:#0a1628;margin-bottom:3px;">{c['nome']}</div>
   <div style="font-size:10px;color:#8a95b0;font-family:monospace;margin-bottom:5px;">{c['cnpj']}</div>
   <span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;margin-bottom:7px;background:{c['status_color']}22;color:{c['status_color']};">{c['status_label']}</span>
-  <div style="font-size:11px;color:#4a5568;margin-bottom:2px;">📍 <b>Cidade:</b> {c['cidade']}</div>
+  <div style="font-size:11px;color:#4a5568;margin-bottom:2px;">📍 <b>Endereço:</b> {c['endereco']}</div>
+  <div style="font-size:11px;color:#4a5568;margin-bottom:2px;">🏙️ <b>Cidade:</b> {c['cidade']}</div>
   <div style="font-size:11px;color:#4a5568;margin-bottom:2px;">🚚 <b>Últ. Modelo:</b> {c['modelo']}</div>
   <div style="font-size:11px;color:#4a5568;margin-bottom:6px;">📦 <b>Emplacamentos:</b> {c['vol']}</div>
   <div style="font-size:10px;color:#8a95b0;margin-bottom:8px;">{selo_endereco}</div>
