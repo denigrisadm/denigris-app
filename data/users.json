@@ -117,5 +117,12 @@
     "nome": "REGIANE INAMORATO",
     "consultor_key": "RENATA BELLON",
     "ultimo_acesso": "2026-06-23T10:01:59"
+  },
+  "EDUARDO": {
+    "senha_hash": "0020a1bb56cb71c099032f5997269e77fdb488a3869a7127c9add46724f49726",
+    "perfil": "gerente",
+    "nome": "EDUARDO GARBIM",
+    "consultor_key": "EDUARDO",
+    "ultimo_acesso": null
   }
 }
