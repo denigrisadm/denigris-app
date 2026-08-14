@@ -406,6 +406,54 @@ def montar_endereco_cliente(row):
     partes = [logr, compl, bairro, cidade, uf, cep_fmt, "Brasil"]
     return ", ".join(p for p in partes if p and p != "—")
 
+def montar_endereco_completo(row):
+    """Monta endereço formatado para exportação em relatórios.
+    Formato: Logradouro, Nº - Bairro, Cidade - UF, CEP: XXXXX-XXX
+    Colunas da base EMPLACAMENTOS: TP_LOGR, NO_LOGR, NU_LOGR, NO_COMPL,
+    NO_BAIRRO, NO_CIDADE, SG_ESTADO, NU_CEP."""
+    logr_parts = [safe_str(row.get(c, ""), "") for c in ("TP_LOGR", "NO_LOGR")]
+    logradouro = " ".join(p for p in logr_parts if p and p != "—").strip()
+
+    numero = safe_str(row.get("NU_LOGR", ""), "")
+    complemento = safe_str(row.get("NO_COMPL", ""), "")
+    bairro = safe_str(row.get("NO_BAIRRO", ""), "")
+    cidade = safe_str(row.get("NO_CIDADE", ""), "")
+    uf = safe_str(row.get("SG_ESTADO", ""), "")
+    cep = norm_cep(row.get("NU_CEP", ""))
+    cep_fmt = f"{cep[:5]}-{cep[5:]}" if len(cep) == 8 else ""
+
+    # Bloco "Logradouro, Nº [Complemento]" — omite partes vazias
+    seg_rua = logradouro
+    num_compl = numero
+    if complemento:
+        num_compl = f"{numero} {complemento}".strip() if numero else complemento
+    if num_compl:
+        seg_rua = f"{logradouro}, {num_compl}" if logradouro else num_compl
+
+    # Bloco "Rua - Bairro"
+    if seg_rua and bairro:
+        seg_local = f"{seg_rua} - {bairro}"
+    else:
+        seg_local = seg_rua or bairro
+
+    # Bloco "Cidade - UF"
+    seg_cidade = f"{cidade} - {uf}" if cidade and uf else (cidade or uf)
+
+    blocos = [
+        b for b in (
+            seg_local,
+            seg_cidade,
+            f"CEP: {cep_fmt}" if cep_fmt else "",
+        ) if b
+    ]
+    return ", ".join(blocos)
+
+def adicionar_coluna_endereco_completo(df):
+    """Adiciona coluna 'Endereco_Completo' ao DataFrame de emplacamentos."""
+    df_out = df.copy()
+    df_out["Endereco_Completo"] = df_out.apply(montar_endereco_completo, axis=1)
+    return df_out
+
 def geocode_endereco(row):
     """Geocodifica o endereço completo do cliente via Nominatim/OpenStreetMap → (lat, lon) ou None.
     Tenta busca estruturada (rua+número+cidade+UF+CEP) primeiro — mais precisa — e cai para
@@ -897,11 +945,12 @@ def gerar_relatorio_emplacamento(emp_mes, emp_area, cnpjs_carteira_set, todos_cn
     ws.column_dimensions["E"].width = 22   # Chassi
     ws.column_dimensions["F"].width = 25   # Concessionária
     ws.column_dimensions["G"].width = 18   # Cidade
+    ws.column_dimensions["H"].width = 55   # Endereço completo
 
     # ════════════════════════════════════
     # LINHA 1 — Título principal
     # ════════════════════════════════════
-    ws.merge_cells("A1:G1")
+    ws.merge_cells("A1:H1")
     ws.row_dimensions[1].height = 36
     c = ws["A1"]
     periodo = f"{sel_mes_lbl.upper()} DE {sel_ano}"
@@ -911,7 +960,7 @@ def gerar_relatorio_emplacamento(emp_mes, emp_area, cnpjs_carteira_set, todos_cn
     c.alignment = aln("center")
 
     # Consultor
-    ws.merge_cells("A2:G2")
+    ws.merge_cells("A2:H2")
     ws.row_dimensions[2].height = 18
     c = ws["A2"]
     c.value = f"Consultor: {consultor_nome.title()}"
@@ -995,9 +1044,9 @@ def gerar_relatorio_emplacamento(emp_mes, emp_area, cnpjs_carteira_set, todos_cn
     ws["D5"].border = borda_fina
 
     # Cols F-G: De Nigris (azul)
-    ws.merge_cells("F3:G3")
-    ws.merge_cells("F4:G4")
-    ws.merge_cells("F5:G5")
+    ws.merge_cells("F3:H3")
+    ws.merge_cells("F4:H4")
+    ws.merge_cells("F5:H5")
     ws["F3"].value = "EMPLACAMENTO DE VEÍCULOS QUE COMPROU NA DE NIGRIS"
     ws["F3"].font = font(bold=True, color=BRANCO, size=9)
     ws["F3"].fill = fill(AZUL)
@@ -1034,7 +1083,7 @@ def gerar_relatorio_emplacamento(emp_mes, emp_area, cnpjs_carteira_set, todos_cn
     ws["D6"].alignment = aln("center")
     ws["D6"].border = borda_fina
 
-    ws.merge_cells("F6:G6")
+    ws.merge_cells("F6:H6")
     ws["F6"].value = ""
     ws["F6"].fill = fill("FFE0E0E0")
     ws["F6"].border = borda_fina
@@ -1043,7 +1092,7 @@ def gerar_relatorio_emplacamento(emp_mes, emp_area, cnpjs_carteira_set, todos_cn
     # LINHA 7 — TOP 3 CLIENTES (histórico da área)
     # ════════════════════════════════════
     ws.row_dimensions[7].height = 20
-    ws.merge_cells("A7:G7")
+    ws.merge_cells("A7:H7")
     ws["A7"].value = "🏆  TOP 3 CLIENTES — HISTÓRICO DA ÁREA"
     ws["A7"].font = Font(name="Arial", bold=True, color=BRANCO, size=10)
     ws["A7"].fill = fill("FF2C3E50")
@@ -1084,13 +1133,15 @@ def gerar_relatorio_emplacamento(emp_mes, emp_area, cnpjs_carteira_set, todos_cn
 
         ws[f"G{r}"].fill = fill(CINZA_CL if ti % 2 == 0 else BRANCO)
         ws[f"G{r}"].border = borda_fina
+        ws[f"H{r}"].fill = fill(CINZA_CL if ti % 2 == 0 else BRANCO)
+        ws[f"H{r}"].border = borda_fina
 
     # ════════════════════════════════════
     # LINHA 11+ — Cabeçalho da tabela de dados
     # ════════════════════════════════════
     header_row = 11
     ws.row_dimensions[header_row].height = 24
-    headers = ["DATA EMPLAC.", "CNPJ", "CLIENTE", "MODELO", "CHASSI", "CONCESSIONÁRIA", "CIDADE"]
+    headers = ["DATA EMPLAC.", "CNPJ", "CLIENTE", "MODELO", "CHASSI", "CONCESSIONÁRIA", "CIDADE", "ENDEREÇO COMPLETO"]
     for ci, h in enumerate(headers, 1):
         cell = ws.cell(row=header_row, column=ci)
         cell.value = h
@@ -1102,7 +1153,9 @@ def gerar_relatorio_emplacamento(emp_mes, emp_area, cnpjs_carteira_set, todos_cn
     # ════════════════════════════════════
     # DADOS — todos os emplacamentos do mês
     # ════════════════════════════════════
-    emp_sorted = emp_mes.sort_values("Data emplacamento").reset_index(drop=True)
+    emp_sorted = adicionar_coluna_endereco_completo(
+        emp_mes.sort_values("Data emplacamento").reset_index(drop=True)
+    )
 
     for di, drow in emp_sorted.iterrows():
         r = header_row + 1 + di
@@ -1127,6 +1180,8 @@ def gerar_relatorio_emplacamento(emp_mes, emp_area, cnpjs_carteira_set, todos_cn
         else:
             data_str = str(data_val)[:10] if data_val else "—"
 
+        endereco_completo = safe_str(drow.get("Endereco_Completo", ""), "")
+
         row_data = [
             data_str,
             str(drow.get("CPFCNPJPROPRIETARIO",""))[:20],
@@ -1135,12 +1190,17 @@ def gerar_relatorio_emplacamento(emp_mes, emp_area, cnpjs_carteira_set, todos_cn
             str(drow.get("Chassi",""))[:20],
             str(drow.get("Concessionário",""))[:35],
             str(drow.get("NO_CIDADE",""))[:20],
+            endereco_completo[:120],
         ]
         for ci, val in enumerate(row_data, 1):
             cell = ws.cell(row=r, column=ci, value=val)
             cell.font = Font(name="Arial", size=9, color="FF1A1A1A")
             cell.fill = row_fill
-            cell.alignment = Alignment(horizontal="left" if ci > 1 else "center", vertical="center")
+            cell.alignment = Alignment(
+                horizontal="left" if ci > 1 else "center",
+                vertical="center",
+                wrap_text=(ci == 8),
+            )
             cell.border = borda_fina
 
     # ════════════════════════════════════
@@ -1148,7 +1208,7 @@ def gerar_relatorio_emplacamento(emp_mes, emp_area, cnpjs_carteira_set, todos_cn
     # ════════════════════════════════════
     leg_row = header_row + len(emp_sorted) + 3
     ws.row_dimensions[leg_row].height = 16
-    ws.merge_cells(f"A{leg_row}:G{leg_row}")
+    ws.merge_cells(f"A{leg_row}:H{leg_row}")
     ws[f"A{leg_row}"].value = "LEGENDA:"
     ws[f"A{leg_row}"].font = Font(name="Arial", bold=True, size=9, color="FF1A1A1A")
 
@@ -2290,8 +2350,9 @@ elif pagina == "emplacamentos":
     mostrar_todos = st.toggle("Ver todos os emplacamentos do mês", value=False)
     if mostrar_todos:
         if not emp_mes.empty:
-            _cols_toggle = [c for c in ["NOMEPROPRIETARIO","Placa","Modelo","Marca","Concessionário","NO_CIDADE","Data emplacamento"] if c in emp_mes.columns]
-            det = emp_mes[_cols_toggle].copy()
+            det = adicionar_coluna_endereco_completo(emp_mes.copy())
+            _cols_toggle = [c for c in ["NOMEPROPRIETARIO","Placa","Modelo","Marca","Concessionário","NO_CIDADE","Data emplacamento","Endereco_Completo"] if c in det.columns]
+            det = det[_cols_toggle]
             det = det.rename(columns={
                 "NOMEPROPRIETARIO":"Cliente","Concessionário":"Concessionária",
                 "NO_CIDADE":"Cidade","Data emplacamento":"Data"
@@ -2736,9 +2797,10 @@ elif pagina == "painel":
     st.markdown("<br>", unsafe_allow_html=True)
     mostrar_todos_p = st.toggle(f"📋 Ver todos os emplacamentos do período ({len(df_p):,} registros)", value=False)
     if mostrar_todos_p:
+        det_p = adicionar_coluna_endereco_completo(df_p.copy())
         _cols_p = [c for c in ["Data emplacamento","CPFCNPJPROPRIETARIO","NOMEPROPRIETARIO","Modelo","Marca",
-                                "Concessionário","NO_CIDADE","SG_ESTADO"] if c in df_p.columns]
-        det_p = df_p[_cols_p].copy()
+                                "Concessionário","NO_CIDADE","SG_ESTADO","Endereco_Completo"] if c in det_p.columns]
+        det_p = det_p[_cols_p].copy()
         det_p["Data emplacamento"] = pd.to_datetime(det_p["Data emplacamento"], errors="coerce").dt.strftime("%d/%m/%Y")
         det_p["De Nigris"] = is_denigris(df_p["Concessionário"]).map({True:"✅", False:"—"})
         det_p["Na Carteira"] = df_p["CNPJ_NORM"].isin(todos_cnpjs_cart_p).map({True:"✅", False:"—"})
