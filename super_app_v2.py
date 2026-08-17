@@ -3012,11 +3012,11 @@ elif pagina == "oportunidades":
         st.download_button("📥 Exportar", buf, file_name="concorrentes.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# PÁGINA: VENDEDOR 360 — mapa do vendedor, rating de propensão e lista da semana
+# PÁGINA: VENDEDOR 360 — mapa do vendedor, rating de propensão e lista de prospecção
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 elif pagina == "vendedor360":
     st.markdown("""<div class="page-header"><h1>🧭 Vendedor 360</h1>
-    <p>Área operacional · Carteira · Radar de propensão · Lista da semana</p></div>""", unsafe_allow_html=True)
+    <p>Área operacional · Carteira · Radar de propensão · Prospecção presencial</p></div>""", unsafe_allow_html=True)
 
     if df_emp is None or df_area is None:
         st.warning("⚠️ Dados de emplacamento/área não carregados."); st.stop()
@@ -3052,8 +3052,8 @@ elif pagina == "vendedor360":
     if df_univ_v.empty:
         st.info("Sem emplacamentos localizados na área/carteira deste vendedor ainda."); st.stop()
 
-    # ── Consolidar por CNPJ: histórico, previsão, sócio/decisor, contato ──
-    @st.cache_data(show_spinner=False)
+    # ── Consolidar por CNPJ: histórico completo, endereço, sócios, previsão ──
+    @st.cache_data(show_spinner="Montando radar de propensão...")
     def _montar_radar_v360(df_u, cnpjs_cart_set, _sig):
         linhas = []
         for cnpj, grp in df_u.groupby("CNPJ_NORM"):
@@ -3088,40 +3088,80 @@ elif pagina == "vendedor360":
             else: bucket = "🔵 Monitorar"
             if meses_sem > 12: bucket = "🔴 Inativo +12m"
 
-            # Sócio/decisor + contato (dados já presentes no export Neoway)
-            socio_nome, socio_cargo, socio_tel, socio_tel_n = "—", "—", "", ""
-            for i in range(1,4):
-                ns = safe_str(last.get(f"NOME_SOCIO_DIRETOR{i}",""), "")
+            # ── Sócios/decisores: todos os disponíveis (até 3), não só o primeiro ──
+            socios_list = []
+            for i in range(1, 4):
+                ns = safe_str(last.get(f"NOME_SOCIO_DIRETOR{i}", ""), "")
                 if ns and ns != "—":
-                    socio_nome = ns
-                    socio_cargo = safe_str(last.get(f"CARGO{i}",""), "—")
-                    socio_tel = format_tel(last.get(f"DDD1_CEL_SOCIO{i}"), last.get(f"TEL1_CEL_SOCIO{i}"))
-                    socio_tel_n = make_fone_num(last.get(f"DDD1_CEL_SOCIO{i}"), last.get(f"TEL1_CEL_SOCIO{i}"))
-                    break
+                    cargo_s = safe_str(last.get(f"CARGO{i}", ""), "—")
+                    tel_s = format_tel(last.get(f"DDD1_CEL_SOCIO{i}"), last.get(f"TEL1_CEL_SOCIO{i}"))
+                    tel_s_n = make_fone_num(last.get(f"DDD1_CEL_SOCIO{i}"), last.get(f"TEL1_CEL_SOCIO{i}"))
+                    socios_list.append({"nome": ns, "cargo": cargo_s, "tel": tel_s, "tel_n": tel_s_n})
+            socio_principal = socios_list[0] if socios_list else {"nome": "—", "cargo": "—", "tel": "", "tel_n": ""}
+            socios_fmt = "; ".join(
+                f"{s['nome']} ({s['cargo']})" + (f" - {s['tel']}" if s['tel'] else "")
+                for s in socios_list
+            ) or "—"
+
             tel_geral, tel_geral_n = "", ""
-            for i in range(1,4):
+            for i in range(1, 4):
                 t = format_tel(last.get(f"DDD_CELULAR{i}"), last.get(f"CELULAR{i}"))
                 if t:
                     tel_geral = t
                     tel_geral_n = make_fone_num(last.get(f"DDD_CELULAR{i}"), last.get(f"CELULAR{i}"))
                     break
+            if not tel_geral:
+                for i in range(1, 6):
+                    t = format_tel(last.get(f"DDD{i}"), last.get(f"TELEFONE{i}"))
+                    if t:
+                        tel_geral = t
+                        tel_geral_n = make_fone_num(last.get(f"DDD{i}"), last.get(f"TELEFONE{i}"))
+                        break
+            email_cli = safe_str(last.get("EMAIL", ""), "—")
 
+            # ── Endereço completo (reaproveita função já existente no app) ──
+            endereco = montar_endereco_completo(last)
+            if not endereco:
+                endereco = safe_str(last.get("NO_CIDADE", ""), "—")
+
+            # ── Histórico completo de compras (data | modelo | concessionária) ──
+            hist_rows = grp.sort_values("Data emplacamento", ascending=False)
+            hist_str = " | ".join(
+                f"{pd.Timestamp(r['Data emplacamento']).strftime('%m/%Y')} - {safe_str(r.get('Modelo',''),'?')} @ {safe_str(r.get('Concessionário',''),'?')}"
+                for _, r in hist_rows.iterrows()
+            )
+            ult_concessionaria = safe_str(hist_rows.iloc[0].get("Concessionário", ""), "—")
+            comprou_denigris = bool(is_denigris(hist_rows["Concessionário"]).any()) if "Concessionário" in hist_rows.columns else False
             marcas = get_modes(grp["Marca"], top=1)
-            motivo = (f"Comprou {total}x (última {pd.Timestamp(ultima).strftime('%m/%Y')}); "
-                      f"previsão {prev_lbl}." if prev_lbl else
-                      f"{total} compra(s) na área; sem padrão de recompra definido ainda; {meses_sem} meses sem comprar.")
+            modelos = get_modes(grp["Modelo"], top=1)
+
+            motivo = (
+                f"Comprou {total}x, última em {pd.Timestamp(ultima).strftime('%m/%Y')} ({ult_concessionaria}); "
+                f"ciclo médio indica próxima compra em {prev_lbl}."
+                if prev_lbl else
+                f"{total} compra(s) registrada(s) na área; última em {pd.Timestamp(ultima).strftime('%m/%Y')}; "
+                f"ainda sem padrão de recompra definido (poucos dados históricos)."
+            )
 
             linhas.append({
-                "CNPJ_NORM": cnpj, "Nome": last.get("NOMEPROPRIETARIO","—"), "CNPJ": last.get("CPFCNPJPROPRIETARIO","—"),
-                "Cidade": last.get("NO_CIDADE","—"), "Bairro": last.get("NO_BAIRRO",""),
+                "CNPJ_NORM": cnpj, "Nome": last.get("NOMEPROPRIETARIO", "—"), "CNPJ": last.get("CPFCNPJPROPRIETARIO", "—"),
+                "Cidade": last.get("NO_CIDADE", "—"), "Bairro": last.get("NO_BAIRRO", ""),
+                "Endereço Completo": endereco,
                 "Total Compras": total, "Última Compra": ultima, "Meses Sem Comprar": meses_sem,
-                "Previsão": prev_lbl or "—", "Meses Até Previsão": meses_ate_prev,
+                "Último Modelo": safe_str(hist_rows.iloc[0].get("Modelo",""), "—"),
+                "Última Concessionária": ult_concessionaria,
+                "Comprou De Nigris Antes": "✅ Sim" if comprou_denigris else "⚠️ Não",
                 "Marca Preferida": marcas[0] if marcas else "—",
+                "Modelo Preferido": modelos[0] if modelos else "—",
+                "Histórico Completo": hist_str,
+                "Previsão": prev_lbl or "—", "Meses Até Previsão": meses_ate_prev,
                 "Score": score, "Status": bucket,
                 "Na Carteira": cnpj in cnpjs_cart_set,
-                "Sócio/Decisor": socio_nome, "Cargo": socio_cargo,
-                "Tel. Sócio": socio_tel, "Tel. Sócio (wa)": socio_tel_n,
+                "Sócio/Decisor Principal": socio_principal["nome"], "Cargo Decisor": socio_principal["cargo"],
+                "Todos os Sócios": socios_fmt,
+                "Tel. Decisor": socio_principal["tel"], "Tel. Decisor (wa)": socio_principal["tel_n"],
                 "Tel. Geral": tel_geral, "Tel. Geral (wa)": tel_geral_n,
+                "E-mail": email_cli,
                 "Motivo": motivo,
             })
         return pd.DataFrame(linhas)
@@ -3132,15 +3172,21 @@ elif pagina == "vendedor360":
     if radar.empty:
         st.info("Sem dados suficientes para montar o radar deste vendedor."); st.stop()
 
-    n_quentes = (radar["Status"] == "🔥 Quente").sum()
-    n_mornos  = (radar["Status"] == "🟡 Morno").sum()
-    n_fora    = (~radar["Na Carteira"]).sum()
+    # ── Filtro por região (multi-cidade) — aplicado a todas as sub-abas ──
+    cidades_disp = sorted(radar["Cidade"].dropna().unique().tolist())
+    sel_cidades = st.multiselect("📍 Filtrar por cidade(s)", cidades_disp, default=[], key="v360_cidades",
+                                  placeholder="Todas as cidades da área (deixe vazio para ver tudo)")
+    radar_base = radar[radar["Cidade"].isin(sel_cidades)].copy() if sel_cidades else radar.copy()
+
+    n_quentes = (radar_base["Status"] == "🔥 Quente").sum()
+    n_mornos  = (radar_base["Status"] == "🟡 Morno").sum()
+    n_fora    = (~radar_base["Na Carteira"]).sum()
     munic_lbl = " · ".join(m.title() for m in munic_v[:3]) + (f" +{len(munic_v)-3}" if len(munic_v) > 3 else "") if munic_v else "—"
 
     st.markdown('<div class="kpi-grid">', unsafe_allow_html=True)
     k1,k2,k3,k4,k5 = st.columns(5)
     with k1: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Área Operacional</div><div class="kpi-value" style="font-size:14px;">{munic_lbl}</div></div>', unsafe_allow_html=True)
-    with k2: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Clientes no Radar</div><div class="kpi-value">{len(radar)}</div></div>', unsafe_allow_html=True)
+    with k2: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Clientes no Radar</div><div class="kpi-value">{len(radar_base)}</div></div>', unsafe_allow_html=True)
     with k3: st.markdown(f'<div class="kpi-card"><div class="kpi-label">🔥 Quentes</div><div class="kpi-value green">{n_quentes}</div></div>', unsafe_allow_html=True)
     with k4: st.markdown(f'<div class="kpi-card"><div class="kpi-label">🟡 Mornos</div><div class="kpi-value blue">{n_mornos}</div></div>', unsafe_allow_html=True)
     with k5: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Fora da Carteira</div><div class="kpi-value red">{n_fora}</div></div>', unsafe_allow_html=True)
@@ -3160,8 +3206,8 @@ elif pagina == "vendedor360":
                     df_chk["CNPJ_NORM"] = df_chk[col_cnpj_chk].astype(str).str.replace(r"\D","",regex=True)
                     df_chk[col_data_chk] = pd.to_datetime(df_chk[col_data_chk], dayfirst=True, errors="coerce")
                     ult_visita = df_chk.groupby("CNPJ_NORM")[col_data_chk].max()
-                    radar["Última Visita"] = radar["CNPJ_NORM"].map(ult_visita)
-                    radar["Dias Sem Visita"] = radar["Última Visita"].apply(
+                    radar_base["Última Visita"] = radar_base["CNPJ_NORM"].map(ult_visita)
+                    radar_base["Dias Sem Visita"] = radar_base["Última Visita"].apply(
                         lambda d: (pd.Timestamp.now() - d).days if pd.notna(d) else None)
                     st.success(f"✅ {df_chk['CNPJ_NORM'].nunique()} clientes com check-in importado.")
                 else:
@@ -3169,58 +3215,85 @@ elif pagina == "vendedor360":
             except Exception as e:
                 st.error(f"Erro ao ler planilha: {e}")
 
-    tab_r1, tab_r2, tab_r3 = st.tabs(["🏆 Maiores Clientes", "📡 Radar de Propensão", "📋 Lista da Semana (12)"])
+    # Colunas completas para toda exportação (endereço + sócios + histórico sempre presentes)
+    COLS_EXPORT = [
+        "Nome","CNPJ","Endereço Completo","Cidade","Bairro","Na Carteira","Status","Score",
+        "Última Compra","Meses Sem Comprar","Total Compras","Último Modelo","Última Concessionária",
+        "Comprou De Nigris Antes","Marca Preferida","Modelo Preferido","Previsão","Motivo",
+        "Sócio/Decisor Principal","Cargo Decisor","Todos os Sócios","Tel. Decisor","Tel. Geral","E-mail",
+        "Histórico Completo",
+    ]
+
+    def _exportar_xlsx(df_exp, filename, label):
+        cols = [c for c in COLS_EXPORT if c in df_exp.columns]
+        if "Última Visita" in df_exp.columns: cols += ["Última Visita","Dias Sem Visita"]
+        d = df_exp[cols].copy()
+        if "Última Compra" in d.columns:
+            d["Última Compra"] = pd.to_datetime(d["Última Compra"]).dt.strftime("%d/%m/%Y")
+        buf = BytesIO(); d.to_excel(buf, index=False, engine="openpyxl"); buf.seek(0)
+        st.download_button(label, buf, file_name=filename,
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           key=f"dl_{filename}")
+
+    tab_r1, tab_r2, tab_r3 = st.tabs(["🏆 Maiores Clientes", "📡 Radar Completo", "📋 Prospecção (Próximos da Compra)"])
 
     with tab_r1:
-        top_vol = radar.sort_values("Total Compras", ascending=False).head(15).copy()
-        top_vol["Na Carteira"] = top_vol["Na Carteira"].apply(lambda x: "✅ Sim" if x else "⚠️ Não")
-        top_vol_show = top_vol[["Nome","Cidade","Total Compras","Última Compra","Marca Preferida","Na Carteira","Status"]].copy()
+        top_vol = radar_base.sort_values("Total Compras", ascending=False).head(20).copy()
+        top_vol_show = top_vol[["Nome","Cidade","Endereço Completo","Total Compras","Última Compra","Última Concessionária",
+                                  "Marca Preferida","Sócio/Decisor Principal","Tel. Decisor","Na Carteira","Status"]].copy()
         top_vol_show["Última Compra"] = pd.to_datetime(top_vol_show["Última Compra"]).dt.strftime("%d/%m/%Y")
+        top_vol_show["Na Carteira"] = top_vol.apply(lambda r: "✅ Sim" if r["Na Carteira"] else "⚠️ Não", axis=1)
         st.dataframe(top_vol_show, use_container_width=True, hide_index=True)
+        _exportar_xlsx(top_vol, f"maiores_clientes_{cons_v360}.xlsx", "📥 Exportar maiores clientes (xlsx)")
 
     with tab_r2:
-        filtro_status = st.multiselect("Filtrar status", radar["Status"].unique().tolist(),
-                                        default=radar["Status"].unique().tolist(), key="v360_filtro")
-        radar_f = radar[radar["Status"].isin(filtro_status)].sort_values("Score", ascending=False).copy()
-        radar_show = radar_f[["Nome","Cidade","Score","Status","Previsão","Meses Sem Comprar","Total Compras","Na Carteira"]].copy()
-        radar_show["Na Carteira"] = radar_show["Na Carteira"].apply(lambda x: "✅ Sim" if x else "⚠️ Não")
+        filtro_status = st.multiselect("Filtrar status", radar_base["Status"].unique().tolist(),
+                                        default=radar_base["Status"].unique().tolist(), key="v360_filtro")
+        radar_f = radar_base[radar_base["Status"].isin(filtro_status)].sort_values("Score", ascending=False).copy()
+        radar_show = radar_f[["Nome","Cidade","Score","Status","Previsão","Meses Sem Comprar","Total Compras",
+                               "Última Concessionária","Sócio/Decisor Principal","Na Carteira"]].copy()
+        radar_show["Na Carteira"] = radar_f.apply(lambda r: "✅ Sim" if r["Na Carteira"] else "⚠️ Não", axis=1)
         st.dataframe(radar_show, use_container_width=True, hide_index=True)
-        buf_r = BytesIO(); radar_f.drop(columns=["Tel. Sócio (wa)","Tel. Geral (wa)"], errors="ignore").to_excel(buf_r, index=False, engine="openpyxl"); buf_r.seek(0)
-        st.download_button("📥 Exportar radar completo", buf_r, file_name=f"radar_{cons_v360}.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        _exportar_xlsx(radar_f, f"radar_completo_{cons_v360}.xlsx", "📥 Exportar radar completo (xlsx)")
 
     with tab_r3:
-        st.caption("Os 12 clientes com maior propensão de compra no momento — priorize a visita presencial nesta ordem.")
-        semana = radar.sort_values("Score", ascending=False).head(12).reset_index(drop=True)
-        if "Dias Sem Visita" in semana.columns:
-            semana["_alerta_visita"] = semana["Dias Sem Visita"].apply(lambda d: (pd.notna(d) and d > 21) or pd.isna(d))
-        msg_wa_v = "Olá! Entro em contato da Comercial De Nigris para conversar sobre a frota da sua empresa."
-        for idx, row in semana.iterrows():
-            alerta_visita = row.get("_alerta_visita", None)
-            tag_visita = ""
+        st.caption("Somente clientes com propensão real de compra agora — priorize a visita presencial nesta ordem. Lista completa, sem corte fixo.")
+        incluir_mornos = st.checkbox("Incluir também 🟡 Mornos (janela de 4-8 meses)", value=False, key="v360_incl_mornos")
+        status_alvo = ["🔥 Quente"] + (["🟡 Morno"] if incluir_mornos else [])
+        semana = radar_base[radar_base["Status"].isin(status_alvo)].sort_values("Score", ascending=False).reset_index(drop=True)
+
+        if semana.empty:
+            st.info("Nenhum cliente 🔥 Quente no momento com os filtros atuais. Tente incluir os Mornos acima ou revise o filtro de cidade.")
+        else:
+            st.markdown(f'<div class="alert-green">🔥 <strong>{len(semana)} clientes</strong> prontos para abordagem presencial ou por telefone</div>', unsafe_allow_html=True)
             if "Dias Sem Visita" in semana.columns:
-                if pd.notna(row.get("Última Visita")):
-                    dv = int(row["Dias Sem Visita"])
-                    tag_visita = f' · 🕓 última visita há {dv}d' + (' ⚠️' if dv > 21 else '')
-                else:
-                    tag_visita = ' · 🚫 nunca visitado ⚠️'
-            with st.expander(f"{idx+1}. {row['Nome']} — {row['Status']} (score {row['Score']:.0f}){tag_visita}"):
-                st.markdown(f"**Cidade:** {row['Cidade']}  ·  **CNPJ:** {row['CNPJ']}  ·  **Na carteira:** {'✅ Sim' if row['Na Carteira'] else '⚠️ Não — oportunidade nova'}")
-                st.markdown(f"**Por quê:** {row['Motivo']}")
-                if row["Sócio/Decisor"] != "—":
-                    st.markdown(f"**Decisor:** {row['Sócio/Decisor']} ({row['Cargo']})")
-                cbtn1, cbtn2 = st.columns(2)
-                with cbtn1:
-                    if row["Tel. Sócio (wa)"]:
-                        st.markdown(f'<a href="https://wa.me/{row["Tel. Sócio (wa)"]}?text={msg_wa_v}" target="_blank" class="contact-btn btn-whatsapp" style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;">💬 WhatsApp decisor ({row["Tel. Sócio"]})</a>', unsafe_allow_html=True)
-                with cbtn2:
-                    if row["Tel. Geral (wa)"]:
-                        st.markdown(f'<a href="https://wa.me/{row["Tel. Geral (wa)"]}?text={msg_wa_v}" target="_blank" class="contact-btn btn-whatsapp" style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;">💬 WhatsApp geral ({row["Tel. Geral"]})</a>', unsafe_allow_html=True)
-        buf_s = BytesIO()
-        semana_exp = semana[["Nome","CNPJ","Cidade","Score","Status","Na Carteira","Sócio/Decisor","Cargo","Tel. Sócio","Tel. Geral","Motivo"]].copy()
-        semana_exp.to_excel(buf_s, index=False, engine="openpyxl"); buf_s.seek(0)
-        st.download_button("📥 Exportar lista da semana", buf_s, file_name=f"lista_semana_{cons_v360}.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                semana["_nunca_ou_atrasado"] = semana["Dias Sem Visita"].apply(lambda d: pd.isna(d) or d > 21)
+            msg_wa_v = "Olá! Entro em contato da Comercial De Nigris para conversar sobre a frota da sua empresa."
+            for idx, row in semana.iterrows():
+                tag_visita = ""
+                if "Dias Sem Visita" in semana.columns:
+                    if pd.notna(row.get("Última Visita")):
+                        dv = int(row["Dias Sem Visita"])
+                        tag_visita = f' · 🕓 última visita há {dv}d' + (' ⚠️' if dv > 21 else '')
+                    else:
+                        tag_visita = ' · 🚫 nunca visitado ⚠️'
+                with st.expander(f"{idx+1}. {row['Nome']} — {row['Status']} (score {row['Score']:.0f}){tag_visita}"):
+                    st.markdown(f"**Endereço:** {row['Endereço Completo']}")
+                    st.markdown(f"**CNPJ:** {row['CNPJ']}  ·  **Na carteira:** {'✅ Sim' if row['Na Carteira'] else '⚠️ Não — oportunidade nova'}")
+                    st.markdown(f"**Por quê agora:** {row['Motivo']}")
+                    st.markdown(f"**Última compra:** {row['Último Modelo']} em {pd.Timestamp(row['Última Compra']).strftime('%m/%Y')} pela **{row['Última Concessionária']}**"
+                                + (" _(comprou de nós antes)_" if row["Comprou De Nigris Antes"]=="✅ Sim" else " _(comprou de concorrente)_"))
+                    st.markdown(f"**Histórico completo:** {row['Histórico Completo']}")
+                    if row["Todos os Sócios"] != "—":
+                        st.markdown(f"**Sócios/decisores:** {row['Todos os Sócios']}")
+                    cbtn1, cbtn2 = st.columns(2)
+                    with cbtn1:
+                        if row["Tel. Decisor (wa)"]:
+                            st.markdown(f'<a href="https://wa.me/{row["Tel. Decisor (wa)"]}?text={msg_wa_v}" target="_blank" class="contact-btn btn-whatsapp" style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;">💬 WhatsApp decisor ({row["Tel. Decisor"]})</a>', unsafe_allow_html=True)
+                    with cbtn2:
+                        if row["Tel. Geral (wa)"]:
+                            st.markdown(f'<a href="https://wa.me/{row["Tel. Geral (wa)"]}?text={msg_wa_v}" target="_blank" class="contact-btn btn-whatsapp" style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;">💬 WhatsApp geral ({row["Tel. Geral"]})</a>', unsafe_allow_html=True)
+            _exportar_xlsx(semana, f"prospeccao_{cons_v360}.xlsx", "📥 Exportar lista de prospecção completa (xlsx)")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PÁGINA: ADMIN
