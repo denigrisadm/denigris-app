@@ -1368,9 +1368,9 @@ if st.session_state.df_emp_list and st.session_state.get("_emp_merged_len") != _
     st.session_state["_emp_merged_len"] = _emp_list_len
 df_emp = st.session_state.get("_df_emp_merged") if st.session_state.df_emp_list else None
 
-PAGINAS_GESTOR  = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun."),("mapa","🗺️","Mapa"),("admin","⚙️","Admin")]
-PAGINAS_GERENTE = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun."),("mapa","🗺️","Mapa")]
-PAGINAS_VEND    = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("oportunidades","🎯","Oportun."),("mapa","🗺️","Mapa")]
+PAGINAS_GESTOR  = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun."),("vendedor360","🧭","Vend. 360"),("mapa","🗺️","Mapa"),("admin","⚙️","Admin")]
+PAGINAS_GERENTE = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("painel","📊","Painel"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun."),("vendedor360","🧭","Vend. 360"),("mapa","🗺️","Mapa")]
+PAGINAS_VEND    = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("oportunidades","🎯","Oportun."),("vendedor360","🧭","Vend. 360"),("mapa","🗺️","Mapa")]
 
 if perfil == "gestor": PAGINAS = PAGINAS_GESTOR
 elif perfil == "gerente": PAGINAS = PAGINAS_GERENTE
@@ -3010,6 +3010,217 @@ elif pagina == "oportunidades":
         st.dataframe(cs, use_container_width=True, hide_index=True)
         buf=BytesIO(); cs.to_excel(buf,index=False,engine="openpyxl"); buf.seek(0)
         st.download_button("📥 Exportar", buf, file_name="concorrentes.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# PÁGINA: VENDEDOR 360 — mapa do vendedor, rating de propensão e lista da semana
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+elif pagina == "vendedor360":
+    st.markdown("""<div class="page-header"><h1>🧭 Vendedor 360</h1>
+    <p>Área operacional · Carteira · Radar de propensão · Lista da semana</p></div>""", unsafe_allow_html=True)
+
+    if df_emp is None or df_area is None:
+        st.warning("⚠️ Dados de emplacamento/área não carregados."); st.stop()
+
+    today = pd.Timestamp.now()
+
+    # ── Seleção do vendedor ──
+    if perfil in ("gestor", "gerente"):
+        lista_cons = sorted(df_area[df_area["Consultor"] != "ZONA LIVRE"]["Consultor"].unique().tolist())
+        if not lista_cons:
+            st.warning("Nenhum vendedor cadastrado na área operacional."); st.stop()
+        sel_v360 = st.selectbox("Vendedor", [c.title() for c in lista_cons], key="v360_sel")
+        cons_v360 = norm_str(sel_v360)
+    else:
+        cons_v360 = cons_key
+        st.markdown(f'<div class="alert-blue">📍 Mapa de <strong>{nome}</strong></div>', unsafe_allow_html=True)
+
+    # ── Universo do vendedor: área geográfica (CEP/cidade) + carteira nominal, menos conflito com outro vendedor ──
+    munic_v, cep_r_v = get_munic_area(cons_v360, df_area)
+    df_area_v = emp_da_area(df_emp, munic_v, cep_r_v)
+
+    cnpjs_minha_cart_v, cnpjs_conflito_v = set(), set()
+    if df_cart is not None:
+        cnpjs_minha_cart_v = set(df_cart[norm_str_series(df_cart["VENDEDOR"]) == cons_v360]["CNPJ_NORM"].dropna())
+        emp_cart_extra_v = df_emp[df_emp["CNPJ_NORM"].isin(cnpjs_minha_cart_v) & ~df_emp.index.isin(df_area_v.index)]
+        df_univ_v = pd.concat([df_area_v, emp_cart_extra_v], ignore_index=True)
+        cnpjs_outros_v = set(df_cart[norm_str_series(df_cart["VENDEDOR"]) != cons_v360]["CNPJ_NORM"].dropna())
+        cnpjs_conflito_v = cnpjs_outros_v - cnpjs_minha_cart_v
+        df_univ_v = df_univ_v[~df_univ_v["CNPJ_NORM"].isin(cnpjs_conflito_v)].copy()
+    else:
+        df_univ_v = df_area_v.copy()
+
+    if df_univ_v.empty:
+        st.info("Sem emplacamentos localizados na área/carteira deste vendedor ainda."); st.stop()
+
+    # ── Consolidar por CNPJ: histórico, previsão, sócio/decisor, contato ──
+    @st.cache_data(show_spinner=False)
+    def _montar_radar_v360(df_u, cnpjs_cart_set, _sig):
+        linhas = []
+        for cnpj, grp in df_u.groupby("CNPJ_NORM"):
+            if not cnpj or cnpj == "nan": continue
+            grp = grp.sort_values("Data emplacamento")
+            dts = grp["Data emplacamento"].dropna().tolist()
+            if not dts: continue
+            last = grp.iloc[-1]
+            total = len(grp)
+            ultima = dts[-1]
+            meses_sem = int(relativedelta(pd.Timestamp.now(), pd.Timestamp(ultima)).years*12 +
+                             relativedelta(pd.Timestamp.now(), pd.Timestamp(ultima)).months)
+
+            prev_lbl, prev_dt = calc_prediction(dts) if len(dts) >= 2 else (None, None)
+            meses_ate_prev = None
+            if prev_dt is not None:
+                dm = relativedelta(prev_dt, pd.Timestamp.now())
+                meses_ate_prev = dm.years*12 + dm.months
+
+            # ── Score de propensão (0-100) ──
+            if meses_ate_prev is not None:
+                dist = abs(meses_ate_prev)
+                score_previsao = max(0, 100 - dist*9) if meses_ate_prev <= 6 else max(0, 60 - (meses_ate_prev-6)*6)
+            else:
+                score_previsao = max(0, 35 - meses_sem*0.8)  # sem padrão: só recência conta, e pouco
+            score_volume = min(total, 8) / 8 * 100
+            score = round(score_previsao*0.65 + score_volume*0.35, 1)
+            score = max(0, min(100, score))
+
+            if score >= 70: bucket = "🔥 Quente"
+            elif score >= 40: bucket = "🟡 Morno"
+            else: bucket = "🔵 Monitorar"
+            if meses_sem > 12: bucket = "🔴 Inativo +12m"
+
+            # Sócio/decisor + contato (dados já presentes no export Neoway)
+            socio_nome, socio_cargo, socio_tel, socio_tel_n = "—", "—", "", ""
+            for i in range(1,4):
+                ns = safe_str(last.get(f"NOME_SOCIO_DIRETOR{i}",""), "")
+                if ns and ns != "—":
+                    socio_nome = ns
+                    socio_cargo = safe_str(last.get(f"CARGO{i}",""), "—")
+                    socio_tel = format_tel(last.get(f"DDD1_CEL_SOCIO{i}"), last.get(f"TEL1_CEL_SOCIO{i}"))
+                    socio_tel_n = make_fone_num(last.get(f"DDD1_CEL_SOCIO{i}"), last.get(f"TEL1_CEL_SOCIO{i}"))
+                    break
+            tel_geral, tel_geral_n = "", ""
+            for i in range(1,4):
+                t = format_tel(last.get(f"DDD_CELULAR{i}"), last.get(f"CELULAR{i}"))
+                if t:
+                    tel_geral = t
+                    tel_geral_n = make_fone_num(last.get(f"DDD_CELULAR{i}"), last.get(f"CELULAR{i}"))
+                    break
+
+            marcas = get_modes(grp["Marca"], top=1)
+            motivo = (f"Comprou {total}x (última {pd.Timestamp(ultima).strftime('%m/%Y')}); "
+                      f"previsão {prev_lbl}." if prev_lbl else
+                      f"{total} compra(s) na área; sem padrão de recompra definido ainda; {meses_sem} meses sem comprar.")
+
+            linhas.append({
+                "CNPJ_NORM": cnpj, "Nome": last.get("NOMEPROPRIETARIO","—"), "CNPJ": last.get("CPFCNPJPROPRIETARIO","—"),
+                "Cidade": last.get("NO_CIDADE","—"), "Bairro": last.get("NO_BAIRRO",""),
+                "Total Compras": total, "Última Compra": ultima, "Meses Sem Comprar": meses_sem,
+                "Previsão": prev_lbl or "—", "Meses Até Previsão": meses_ate_prev,
+                "Marca Preferida": marcas[0] if marcas else "—",
+                "Score": score, "Status": bucket,
+                "Na Carteira": cnpj in cnpjs_cart_set,
+                "Sócio/Decisor": socio_nome, "Cargo": socio_cargo,
+                "Tel. Sócio": socio_tel, "Tel. Sócio (wa)": socio_tel_n,
+                "Tel. Geral": tel_geral, "Tel. Geral (wa)": tel_geral_n,
+                "Motivo": motivo,
+            })
+        return pd.DataFrame(linhas)
+
+    _sig_v360 = (cons_v360, len(df_univ_v))
+    radar = _montar_radar_v360(df_univ_v, cnpjs_minha_cart_v, _sig_v360)
+
+    if radar.empty:
+        st.info("Sem dados suficientes para montar o radar deste vendedor."); st.stop()
+
+    n_quentes = (radar["Status"] == "🔥 Quente").sum()
+    n_mornos  = (radar["Status"] == "🟡 Morno").sum()
+    n_fora    = (~radar["Na Carteira"]).sum()
+    munic_lbl = " · ".join(m.title() for m in munic_v[:3]) + (f" +{len(munic_v)-3}" if len(munic_v) > 3 else "") if munic_v else "—"
+
+    st.markdown('<div class="kpi-grid">', unsafe_allow_html=True)
+    k1,k2,k3,k4,k5 = st.columns(5)
+    with k1: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Área Operacional</div><div class="kpi-value" style="font-size:14px;">{munic_lbl}</div></div>', unsafe_allow_html=True)
+    with k2: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Clientes no Radar</div><div class="kpi-value">{len(radar)}</div></div>', unsafe_allow_html=True)
+    with k3: st.markdown(f'<div class="kpi-card"><div class="kpi-label">🔥 Quentes</div><div class="kpi-value green">{n_quentes}</div></div>', unsafe_allow_html=True)
+    with k4: st.markdown(f'<div class="kpi-card"><div class="kpi-label">🟡 Mornos</div><div class="kpi-value blue">{n_mornos}</div></div>', unsafe_allow_html=True)
+    with k5: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Fora da Carteira</div><div class="kpi-value red">{n_fora}</div></div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── Check-in opcional: cruza com data da última visita ──
+    with st.expander("📅 Importar check-ins (visitas presenciais) — opcional"):
+        st.caption("Planilha com colunas de CNPJ e Data da visita. Cruza automaticamente com o radar abaixo.")
+        chk_file = st.file_uploader("Excel de check-ins", type=["xlsx","xls"], key="v360_checkin")
+        if chk_file is not None:
+            try:
+                df_chk = pd.read_excel(chk_file)
+                df_chk.columns = [str(c).strip() for c in df_chk.columns]
+                col_cnpj_chk = next((c for c in df_chk.columns if "CNPJ" in c.upper()), None)
+                col_data_chk = next((c for c in df_chk.columns if "DATA" in c.upper()), None)
+                if col_cnpj_chk and col_data_chk:
+                    df_chk["CNPJ_NORM"] = df_chk[col_cnpj_chk].astype(str).str.replace(r"\D","",regex=True)
+                    df_chk[col_data_chk] = pd.to_datetime(df_chk[col_data_chk], dayfirst=True, errors="coerce")
+                    ult_visita = df_chk.groupby("CNPJ_NORM")[col_data_chk].max()
+                    radar["Última Visita"] = radar["CNPJ_NORM"].map(ult_visita)
+                    radar["Dias Sem Visita"] = radar["Última Visita"].apply(
+                        lambda d: (pd.Timestamp.now() - d).days if pd.notna(d) else None)
+                    st.success(f"✅ {df_chk['CNPJ_NORM'].nunique()} clientes com check-in importado.")
+                else:
+                    st.error("Não encontrei colunas de CNPJ/Data na planilha.")
+            except Exception as e:
+                st.error(f"Erro ao ler planilha: {e}")
+
+    tab_r1, tab_r2, tab_r3 = st.tabs(["🏆 Maiores Clientes", "📡 Radar de Propensão", "📋 Lista da Semana (12)"])
+
+    with tab_r1:
+        top_vol = radar.sort_values("Total Compras", ascending=False).head(15).copy()
+        top_vol["Na Carteira"] = top_vol["Na Carteira"].apply(lambda x: "✅ Sim" if x else "⚠️ Não")
+        top_vol_show = top_vol[["Nome","Cidade","Total Compras","Última Compra","Marca Preferida","Na Carteira","Status"]].copy()
+        top_vol_show["Última Compra"] = pd.to_datetime(top_vol_show["Última Compra"]).dt.strftime("%d/%m/%Y")
+        st.dataframe(top_vol_show, use_container_width=True, hide_index=True)
+
+    with tab_r2:
+        filtro_status = st.multiselect("Filtrar status", radar["Status"].unique().tolist(),
+                                        default=radar["Status"].unique().tolist(), key="v360_filtro")
+        radar_f = radar[radar["Status"].isin(filtro_status)].sort_values("Score", ascending=False).copy()
+        radar_show = radar_f[["Nome","Cidade","Score","Status","Previsão","Meses Sem Comprar","Total Compras","Na Carteira"]].copy()
+        radar_show["Na Carteira"] = radar_show["Na Carteira"].apply(lambda x: "✅ Sim" if x else "⚠️ Não")
+        st.dataframe(radar_show, use_container_width=True, hide_index=True)
+        buf_r = BytesIO(); radar_f.drop(columns=["Tel. Sócio (wa)","Tel. Geral (wa)"], errors="ignore").to_excel(buf_r, index=False, engine="openpyxl"); buf_r.seek(0)
+        st.download_button("📥 Exportar radar completo", buf_r, file_name=f"radar_{cons_v360}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    with tab_r3:
+        st.caption("Os 12 clientes com maior propensão de compra no momento — priorize a visita presencial nesta ordem.")
+        semana = radar.sort_values("Score", ascending=False).head(12).reset_index(drop=True)
+        if "Dias Sem Visita" in semana.columns:
+            semana["_alerta_visita"] = semana["Dias Sem Visita"].apply(lambda d: (pd.notna(d) and d > 21) or pd.isna(d))
+        msg_wa_v = "Olá! Entro em contato da Comercial De Nigris para conversar sobre a frota da sua empresa."
+        for idx, row in semana.iterrows():
+            alerta_visita = row.get("_alerta_visita", None)
+            tag_visita = ""
+            if "Dias Sem Visita" in semana.columns:
+                if pd.notna(row.get("Última Visita")):
+                    dv = int(row["Dias Sem Visita"])
+                    tag_visita = f' · 🕓 última visita há {dv}d' + (' ⚠️' if dv > 21 else '')
+                else:
+                    tag_visita = ' · 🚫 nunca visitado ⚠️'
+            with st.expander(f"{idx+1}. {row['Nome']} — {row['Status']} (score {row['Score']:.0f}){tag_visita}"):
+                st.markdown(f"**Cidade:** {row['Cidade']}  ·  **CNPJ:** {row['CNPJ']}  ·  **Na carteira:** {'✅ Sim' if row['Na Carteira'] else '⚠️ Não — oportunidade nova'}")
+                st.markdown(f"**Por quê:** {row['Motivo']}")
+                if row["Sócio/Decisor"] != "—":
+                    st.markdown(f"**Decisor:** {row['Sócio/Decisor']} ({row['Cargo']})")
+                cbtn1, cbtn2 = st.columns(2)
+                with cbtn1:
+                    if row["Tel. Sócio (wa)"]:
+                        st.markdown(f'<a href="https://wa.me/{row["Tel. Sócio (wa)"]}?text={msg_wa_v}" target="_blank" class="contact-btn btn-whatsapp" style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;">💬 WhatsApp decisor ({row["Tel. Sócio"]})</a>', unsafe_allow_html=True)
+                with cbtn2:
+                    if row["Tel. Geral (wa)"]:
+                        st.markdown(f'<a href="https://wa.me/{row["Tel. Geral (wa)"]}?text={msg_wa_v}" target="_blank" class="contact-btn btn-whatsapp" style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;">💬 WhatsApp geral ({row["Tel. Geral"]})</a>', unsafe_allow_html=True)
+        buf_s = BytesIO()
+        semana_exp = semana[["Nome","CNPJ","Cidade","Score","Status","Na Carteira","Sócio/Decisor","Cargo","Tel. Sócio","Tel. Geral","Motivo"]].copy()
+        semana_exp.to_excel(buf_s, index=False, engine="openpyxl"); buf_s.seek(0)
+        st.download_button("📥 Exportar lista da semana", buf_s, file_name=f"lista_semana_{cons_v360}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PÁGINA: ADMIN
