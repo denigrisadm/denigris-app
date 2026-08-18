@@ -751,6 +751,7 @@ def load_area(src):
     # Limpar e normalizar
     df = df[df["Consultor"].astype(str).str.strip().str.upper() != "NAN"].copy()
     df = df[df["Consultor"].astype(str).str.strip() != ""].copy()
+    df["Consultor_Original"] = df["Consultor"].astype(str).str.strip()  # preserva nome com acento/caixa original p/ exibição
     df["Consultor"]      = norm_str_series(df["Consultor"].fillna("ZONA LIVRE"))
     df["Municipio_norm"] = norm_str_series(df["Municipio"])
     df["Bairro_norm"]    = norm_str_series(df["Bairro"].fillna(""))
@@ -770,6 +771,31 @@ def load_area(src):
     df["Cidade_real"] = df.apply(_cidade_real, axis=1)
 
     return df.reset_index(drop=True)
+
+def nome_display_vendedor(cons_norm, df_area, df_cart):
+    """Recupera o nome do vendedor com grafia/acentuação corretas (evita mostrar
+    nomes normalizados tipo 'JOSE' em vez de 'José' nos botões/seletores)."""
+    cands = []
+    if df_area is not None and "Consultor_Original" in df_area.columns:
+        cands += df_area.loc[df_area["Consultor"] == cons_norm, "Consultor_Original"].dropna().tolist()
+    if df_cart is not None and "VENDEDOR" in df_cart.columns:
+        cands += df_cart.loc[norm_str_series(df_cart["VENDEDOR"]) == cons_norm, "VENDEDOR"].dropna().tolist()
+    cands = [c.strip() for c in cands if c and str(c).strip()]
+    if not cands:
+        return cons_norm.title()
+    proprios = [c for c in cands if c != c.upper()]  # prefere um que não esteja 100% caixa alta
+    return proprios[0] if proprios else cands[0].title()
+
+def lista_vendedores_disponiveis(df_area, df_cart):
+    """União dos vendedores presentes na planilha de ÁREA e na de CARTEIRA — garante que
+    um vendedor cadastrado só na carteira (ainda sem faixa de CEP definida) não suma do seletor."""
+    chaves = set()
+    if df_area is not None:
+        chaves |= set(df_area.loc[df_area["Consultor"] != "ZONA LIVRE", "Consultor"].unique().tolist())
+    if df_cart is not None and "VENDEDOR" in df_cart.columns:
+        chaves |= set(k for k in norm_str_series(df_cart["VENDEDOR"]).unique().tolist() if k)
+    pares = [(nome_display_vendedor(k, df_area, df_cart), k) for k in chaves]
+    return sorted(pares, key=lambda x: x[0])
 
 @st.cache_data(show_spinner=False)
 def load_carteira(src):
@@ -3012,35 +3038,63 @@ elif pagina == "oportunidades":
         st.download_button("📥 Exportar", buf, file_name="concorrentes.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# PÁGINA: VENDEDOR 360 — mapa do vendedor, rating de propensão e lista de prospecção
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# PÁGINA: VENDEDOR 360 — carteira, área operacional, radar de propensão e prospecção
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 elif pagina == "vendedor360":
     st.markdown("""<div class="page-header"><h1>🧭 Vendedor 360</h1>
-    <p>Área operacional · Carteira · Radar de propensão · Prospecção presencial</p></div>""", unsafe_allow_html=True)
+    <p>Carteira · Área operacional · Radar de propensão · Prospecção presencial</p></div>""", unsafe_allow_html=True)
 
     if df_emp is None or df_area is None:
         st.warning("⚠️ Dados de emplacamento/área não carregados."); st.stop()
 
     today = pd.Timestamp.now()
 
-    # ── Seleção do vendedor ──
+    # ── Seleção do vendedor (união ÁREA + CARTEIRA, com nome exibido corretamente) ──
     if perfil in ("gestor", "gerente"):
-        lista_cons = sorted(df_area[df_area["Consultor"] != "ZONA LIVRE"]["Consultor"].unique().tolist())
-        if not lista_cons:
-            st.warning("Nenhum vendedor cadastrado na área operacional."); st.stop()
-        sel_v360 = st.selectbox("Vendedor", [c.title() for c in lista_cons], key="v360_sel")
-        cons_v360 = norm_str(sel_v360)
+        pares_v360 = lista_vendedores_disponiveis(df_area, df_cart)
+        if not pares_v360:
+            st.warning("Nenhum vendedor cadastrado na área operacional ou na carteira."); st.stop()
+        labels_v360 = [p[0] for p in pares_v360]
+        map_label_key = {p[0]: p[1] for p in pares_v360}
+        sel_v360 = st.selectbox("Vendedor", labels_v360, key="v360_sel")
+        cons_v360 = map_label_key[sel_v360]
+        nome_v360 = sel_v360
     else:
         cons_v360 = cons_key
-        st.markdown(f'<div class="alert-blue">📍 Mapa de <strong>{nome}</strong></div>', unsafe_allow_html=True)
+        nome_v360 = nome
+        st.markdown(f'<div class="alert-blue">📍 Mapa de <strong>{nome_v360}</strong></div>', unsafe_allow_html=True)
+
+    # ── Diagnóstico rápido (auditoria) — mostra a causa se o vendedor aparecer "vazio" ──
+    n_area_rows = len(df_area[df_area["Consultor"] == cons_v360]) if df_area is not None else 0
+    n_cart_rows = len(df_cart[norm_str_series(df_cart["VENDEDOR"]) == cons_v360]) if df_cart is not None else 0
+    with st.expander(f"🔍 Diagnóstico de dados — {nome_v360}", expanded=(n_area_rows == 0 or n_cart_rows == 0)):
+        st.markdown(f"- Chave normalizada usada para o cruzamento: `{cons_v360}`")
+        st.markdown(f"- Linhas na planilha de **ÁREA OPERACIONAL**: **{n_area_rows}**")
+        st.markdown(f"- Linhas na planilha de **CARTEIRA**: **{n_cart_rows}**")
+        if n_area_rows == 0:
+            st.warning("⚠️ Sem faixa de CEP cadastrada para este vendedor na planilha de área — ele só vai aparecer com os clientes que já estão na carteira dele (nome idêntico na coluna VENDEDOR).")
+        if n_cart_rows == 0:
+            st.warning("⚠️ Nenhuma linha da carteira está com o VENDEDOR escrito exatamente como este nome.")
+        if n_area_rows == 0 and n_cart_rows == 0:
+            st.error("🚫 Este vendedor não tem nenhum dado nas duas planilhas — confira se o nome está escrito de forma idêntica nas duas fontes (sem espaço extra, mesma grafia).")
+        import difflib
+        todos_nomes_norm = set()
+        if df_area is not None: todos_nomes_norm |= set(df_area["Consultor"].unique().tolist())
+        if df_cart is not None: todos_nomes_norm |= set(norm_str_series(df_cart["VENDEDOR"]).unique().tolist())
+        parecidos = difflib.get_close_matches(cons_v360, [n for n in todos_nomes_norm if n and n != cons_v360], n=5, cutoff=0.6)
+        if parecidos:
+            parecidos_disp = [nome_display_vendedor(p, df_area, df_cart) for p in parecidos]
+            st.caption("Nomes parecidos encontrados nas planilhas (possível erro de digitação/duplicidade): " + ", ".join(parecidos_disp))
 
     # ── Universo do vendedor: área geográfica (CEP/cidade) + carteira nominal, menos conflito com outro vendedor ──
     munic_v, cep_r_v = get_munic_area(cons_v360, df_area)
     df_area_v = emp_da_area(df_emp, munic_v, cep_r_v)
 
-    cnpjs_minha_cart_v, cnpjs_conflito_v = set(), set()
+    cart_v = df_cart[norm_str_series(df_cart["VENDEDOR"]) == cons_v360].copy() if df_cart is not None else pd.DataFrame()
+    cnpjs_minha_cart_v = set(cart_v["CNPJ_NORM"].dropna()) if not cart_v.empty else set()
+    cnpjs_conflito_v = set()
     if df_cart is not None:
-        cnpjs_minha_cart_v = set(df_cart[norm_str_series(df_cart["VENDEDOR"]) == cons_v360]["CNPJ_NORM"].dropna())
         emp_cart_extra_v = df_emp[df_emp["CNPJ_NORM"].isin(cnpjs_minha_cart_v) & ~df_emp.index.isin(df_area_v.index)]
         df_univ_v = pd.concat([df_area_v, emp_cart_extra_v], ignore_index=True)
         cnpjs_outros_v = set(df_cart[norm_str_series(df_cart["VENDEDOR"]) != cons_v360]["CNPJ_NORM"].dropna())
@@ -3049,10 +3103,10 @@ elif pagina == "vendedor360":
     else:
         df_univ_v = df_area_v.copy()
 
-    if df_univ_v.empty:
-        st.info("Sem emplacamentos localizados na área/carteira deste vendedor ainda."); st.stop()
+    if df_univ_v.empty and cart_v.empty:
+        st.info("Sem emplacamentos ou carteira localizados para este vendedor ainda."); st.stop()
 
-    # ── Consolidar por CNPJ: histórico completo, endereço, sócios, previsão ──
+    # ── Consolidar por CNPJ: histórico completo, endereço, sócios, previsão (base = universo área+carteira) ──
     @st.cache_data(show_spinner="Montando radar de propensão...")
     def _montar_radar_v360(df_u, cnpjs_cart_set, _sig):
         linhas = []
@@ -3073,12 +3127,11 @@ elif pagina == "vendedor360":
                 dm = relativedelta(prev_dt, pd.Timestamp.now())
                 meses_ate_prev = dm.years*12 + dm.months
 
-            # ── Score de propensão (0-100) ──
             if meses_ate_prev is not None:
                 dist = abs(meses_ate_prev)
                 score_previsao = max(0, 100 - dist*9) if meses_ate_prev <= 6 else max(0, 60 - (meses_ate_prev-6)*6)
             else:
-                score_previsao = max(0, 35 - meses_sem*0.8)  # sem padrão: só recência conta, e pouco
+                score_previsao = max(0, 35 - meses_sem*0.8)
             score_volume = min(total, 8) / 8 * 100
             score = round(score_previsao*0.65 + score_volume*0.35, 1)
             score = max(0, min(100, score))
@@ -3088,7 +3141,6 @@ elif pagina == "vendedor360":
             else: bucket = "🔵 Monitorar"
             if meses_sem > 12: bucket = "🔴 Inativo +12m"
 
-            # ── Sócios/decisores: todos os disponíveis (até 3), não só o primeiro ──
             socios_list = []
             for i in range(1, 4):
                 ns = safe_str(last.get(f"NOME_SOCIO_DIRETOR{i}", ""), "")
@@ -3119,12 +3171,10 @@ elif pagina == "vendedor360":
                         break
             email_cli = safe_str(last.get("EMAIL", ""), "—")
 
-            # ── Endereço completo (reaproveita função já existente no app) ──
             endereco = montar_endereco_completo(last)
             if not endereco:
                 endereco = safe_str(last.get("NO_CIDADE", ""), "—")
 
-            # ── Histórico completo de compras (data | modelo | concessionária) ──
             hist_rows = grp.sort_values("Data emplacamento", ascending=False)
             hist_str = " | ".join(
                 f"{pd.Timestamp(r['Data emplacamento']).strftime('%m/%Y')} - {safe_str(r.get('Modelo',''),'?')} @ {safe_str(r.get('Concessionário',''),'?')}"
@@ -3167,20 +3217,17 @@ elif pagina == "vendedor360":
         return pd.DataFrame(linhas)
 
     _sig_v360 = (cons_v360, len(df_univ_v))
-    radar = _montar_radar_v360(df_univ_v, cnpjs_minha_cart_v, _sig_v360)
-
-    if radar.empty:
-        st.info("Sem dados suficientes para montar o radar deste vendedor."); st.stop()
+    radar = _montar_radar_v360(df_univ_v, cnpjs_minha_cart_v, _sig_v360) if not df_univ_v.empty else pd.DataFrame()
 
     # ── Filtro por região (multi-cidade) — aplicado a todas as sub-abas ──
-    cidades_disp = sorted(radar["Cidade"].dropna().unique().tolist())
+    cidades_disp = sorted(radar["Cidade"].dropna().unique().tolist()) if not radar.empty else []
     sel_cidades = st.multiselect("📍 Filtrar por cidade(s)", cidades_disp, default=[], key="v360_cidades",
                                   placeholder="Todas as cidades da área (deixe vazio para ver tudo)")
-    radar_base = radar[radar["Cidade"].isin(sel_cidades)].copy() if sel_cidades else radar.copy()
+    radar_base = radar[radar["Cidade"].isin(sel_cidades)].copy() if (sel_cidades and not radar.empty) else radar.copy()
 
-    n_quentes = (radar_base["Status"] == "🔥 Quente").sum()
-    n_mornos  = (radar_base["Status"] == "🟡 Morno").sum()
-    n_fora    = (~radar_base["Na Carteira"]).sum()
+    n_quentes = (radar_base["Status"] == "🔥 Quente").sum() if not radar_base.empty else 0
+    n_mornos  = (radar_base["Status"] == "🟡 Morno").sum() if not radar_base.empty else 0
+    n_fora    = (~radar_base["Na Carteira"]).sum() if not radar_base.empty else 0
     munic_lbl = " · ".join(m.title() for m in munic_v[:3]) + (f" +{len(munic_v)-3}" if len(munic_v) > 3 else "") if munic_v else "—"
 
     st.markdown('<div class="kpi-grid">', unsafe_allow_html=True)
@@ -3196,7 +3243,7 @@ elif pagina == "vendedor360":
     with st.expander("📅 Importar check-ins (visitas presenciais) — opcional"):
         st.caption("Planilha com colunas de CNPJ e Data da visita. Cruza automaticamente com o radar abaixo.")
         chk_file = st.file_uploader("Excel de check-ins", type=["xlsx","xls"], key="v360_checkin")
-        if chk_file is not None:
+        if chk_file is not None and not radar_base.empty:
             try:
                 df_chk = pd.read_excel(chk_file)
                 df_chk.columns = [str(c).strip() for c in df_chk.columns]
@@ -3215,7 +3262,6 @@ elif pagina == "vendedor360":
             except Exception as e:
                 st.error(f"Erro ao ler planilha: {e}")
 
-    # Colunas completas para toda exportação (endereço + sócios + histórico sempre presentes)
     COLS_EXPORT = [
         "Nome","CNPJ","Endereço Completo","Cidade","Bairro","Na Carteira","Status","Score",
         "Última Compra","Meses Sem Comprar","Total Compras","Último Modelo","Última Concessionária",
@@ -3224,7 +3270,7 @@ elif pagina == "vendedor360":
         "Histórico Completo",
     ]
 
-    def _exportar_xlsx(df_exp, filename, label):
+    def _exportar_xlsx(df_exp, filename, label, key_extra=""):
         cols = [c for c in COLS_EXPORT if c in df_exp.columns]
         if "Última Visita" in df_exp.columns: cols += ["Última Visita","Dias Sem Visita"]
         d = df_exp[cols].copy()
@@ -3233,67 +3279,215 @@ elif pagina == "vendedor360":
         buf = BytesIO(); d.to_excel(buf, index=False, engine="openpyxl"); buf.seek(0)
         st.download_button(label, buf, file_name=filename,
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                           key=f"dl_{filename}")
+                           key=f"dl_{filename}_{key_extra}")
 
-    tab_r1, tab_r2, tab_r3 = st.tabs(["🏆 Maiores Clientes", "📡 Radar Completo", "📋 Prospecção (Próximos da Compra)"])
+    tab_cart, tab_r1, tab_r2, tab_r3 = st.tabs(["📋 Minha Carteira", "🏆 Maiores Clientes", "📡 Radar Completo", "📆 Prospecção (4 semanas × 12)"])
 
-    with tab_r1:
-        top_vol = radar_base.sort_values("Total Compras", ascending=False).head(20).copy()
-        top_vol_show = top_vol[["Nome","Cidade","Endereço Completo","Total Compras","Última Compra","Última Concessionária",
-                                  "Marca Preferida","Sócio/Decisor Principal","Tel. Decisor","Na Carteira","Status"]].copy()
-        top_vol_show["Última Compra"] = pd.to_datetime(top_vol_show["Última Compra"]).dt.strftime("%d/%m/%Y")
-        top_vol_show["Na Carteira"] = top_vol.apply(lambda r: "✅ Sim" if r["Na Carteira"] else "⚠️ Não", axis=1)
-        st.dataframe(top_vol_show, use_container_width=True, hide_index=True)
-        _exportar_xlsx(top_vol, f"maiores_clientes_{cons_v360}.xlsx", "📥 Exportar maiores clientes (xlsx)")
-
-    with tab_r2:
-        filtro_status = st.multiselect("Filtrar status", radar_base["Status"].unique().tolist(),
-                                        default=radar_base["Status"].unique().tolist(), key="v360_filtro")
-        radar_f = radar_base[radar_base["Status"].isin(filtro_status)].sort_values("Score", ascending=False).copy()
-        radar_show = radar_f[["Nome","Cidade","Score","Status","Previsão","Meses Sem Comprar","Total Compras",
-                               "Última Concessionária","Sócio/Decisor Principal","Na Carteira"]].copy()
-        radar_show["Na Carteira"] = radar_f.apply(lambda r: "✅ Sim" if r["Na Carteira"] else "⚠️ Não", axis=1)
-        st.dataframe(radar_show, use_container_width=True, hide_index=True)
-        _exportar_xlsx(radar_f, f"radar_completo_{cons_v360}.xlsx", "📥 Exportar radar completo (xlsx)")
-
-    with tab_r3:
-        st.caption("Somente clientes com propensão real de compra agora — priorize a visita presencial nesta ordem. Lista completa, sem corte fixo.")
-        incluir_mornos = st.checkbox("Incluir também 🟡 Mornos (janela de 4-8 meses)", value=False, key="v360_incl_mornos")
-        status_alvo = ["🔥 Quente"] + (["🟡 Morno"] if incluir_mornos else [])
-        semana = radar_base[radar_base["Status"].isin(status_alvo)].sort_values("Score", ascending=False).reset_index(drop=True)
-
-        if semana.empty:
-            st.info("Nenhum cliente 🔥 Quente no momento com os filtros atuais. Tente incluir os Mornos acima ou revise o filtro de cidade.")
+    # ══════════════════════════════════════════════════════════
+    # ABA: MINHA CARTEIRA — a carteira também é oportunidade
+    # ══════════════════════════════════════════════════════════
+    with tab_cart:
+        if cart_v.empty:
+            st.info("Nenhum cliente cadastrado na carteira deste vendedor.")
         else:
-            st.markdown(f'<div class="alert-green">🔥 <strong>{len(semana)} clientes</strong> prontos para abordagem presencial ou por telefone</div>', unsafe_allow_html=True)
-            if "Dias Sem Visita" in semana.columns:
-                semana["_nunca_ou_atrasado"] = semana["Dias Sem Visita"].apply(lambda d: pd.isna(d) or d > 21)
+            def _col_like(df, keys):
+                for c in df.columns:
+                    cu = str(c).upper()
+                    if any(k in cu for k in keys): return c
+                return None
+            col_nome_cart = _col_like(cart_v, ["NOME","CLIENTE","RAZAO","RAZÃO"])
+            col_cidade_cart = _col_like(cart_v, ["CIDADE","MUNIC"])
+            col_tel_cart = _col_like(cart_v, ["CELULAR","TELEFONE","FONE"])
+
+            # Full histórico de compras (independe de área geográfica) para cruzar com a carteira inteira
+            if df_emp is not None:
+                emp_full_agg = df_emp.groupby("CNPJ_NORM").agg(
+                    UltimaCompraFull=("Data emplacamento","max"),
+                    TotalComprasFull=("Chassi","count"),
+                ).reset_index()
+            else:
+                emp_full_agg = pd.DataFrame(columns=["CNPJ_NORM","UltimaCompraFull","TotalComprasFull"])
+
+            cart_join = cart_v.merge(emp_full_agg, on="CNPJ_NORM", how="left")
+
+            def _meses_sem(d):
+                if pd.isna(d): return None
+                rd = relativedelta(pd.Timestamp.now(), pd.Timestamp(d))
+                return rd.years*12 + rd.months
+            cart_join["MesesSemComprar"] = cart_join["UltimaCompraFull"].apply(_meses_sem)
+            cart_join["NuncaComprou"] = cart_join["UltimaCompraFull"].isna()
+
+            # Está na área operacional? (por faixa de CEP do próprio cadastro de carteira)
+            def _na_area(cep_norm):
+                if not cep_norm or len(str(cep_norm)) != 8: return None
+                for ini, fim in cep_r_v:
+                    if ini and fim and ini <= cep_norm <= fim:
+                        return True
+                return False
+            if "CEP_norm" in cart_join.columns and cep_r_v:
+                cart_join["NaAreaOperacional"] = cart_join["CEP_norm"].apply(_na_area)
+            else:
+                cart_join["NaAreaOperacional"] = None
+
+            total_c = len(cart_join)
+            n_area_c = int((cart_join["NaAreaOperacional"] == True).sum())
+            n_fora_c = int((cart_join["NaAreaOperacional"] == False).sum())
+            n_sem_cep_c = int(cart_join["NaAreaOperacional"].isna().sum())
+            n_nunca_c = int(cart_join["NuncaComprou"].sum())
+
+            limite_meses = st.slider("Considerar inativo a partir de quantos meses sem comprar?", 3, 36, 12, key="v360_limite_inatividade")
+            inativos_c = cart_join[(~cart_join["NuncaComprou"]) & (cart_join["MesesSemComprar"] > limite_meses)]
+            n_inativos_c = len(inativos_c)
+
+            st.markdown('<div class="kpi-grid">', unsafe_allow_html=True)
+            c1,c2,c3,c4 = st.columns(4)
+            with c1: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Total na Carteira</div><div class="kpi-value">{total_c}</div></div>', unsafe_allow_html=True)
+            with c2: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Dentro da Área Operacional</div><div class="kpi-value green">{n_area_c}</div><div class="kpi-sub">{n_fora_c} fora · {n_sem_cep_c} sem CEP p/ checar</div></div>', unsafe_allow_html=True)
+            with c3: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Sem Comprar +{limite_meses}m</div><div class="kpi-value red">{n_inativos_c}</div></div>', unsafe_allow_html=True)
+            with c4: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Nunca Comprou</div><div class="kpi-value red">{n_nunca_c}</div><div class="kpi-sub">cadastrado, zero compra</div></div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            st.markdown('<div class="alert-blue">💡 A carteira também é oportunidade: os clientes abaixo já são "seus" — não exigem prospecção fria, só reativação.</div>', unsafe_allow_html=True)
+
+            sub_inat, sub_nunca, sub_todos = st.tabs([f"🔴 Inativos +{limite_meses}m ({n_inativos_c})", f"⚪ Nunca Compraram ({n_nunca_c})", f"📋 Carteira Completa ({total_c})"])
+
+            def _show_cart(df_show, cols_extra_nome=True):
+                d = df_show.copy()
+                cols = []
+                if col_nome_cart: cols.append(col_nome_cart)
+                cols.append("CPF/CNPJ")
+                if col_cidade_cart: cols.append(col_cidade_cart)
+                if col_tel_cart: cols.append(col_tel_cart)
+                cols += [c for c in ["UltimaCompraFull","MesesSemComprar","TotalComprasFull","NaAreaOperacional"] if c in d.columns]
+                cols = [c for c in cols if c in d.columns]
+                d = d[cols].rename(columns={
+                    col_nome_cart: "Nome", col_cidade_cart: "Cidade", col_tel_cart: "Telefone",
+                    "UltimaCompraFull": "Última Compra", "MesesSemComprar": "Meses Sem Comprar",
+                    "TotalComprasFull": "Total Compras", "NaAreaOperacional": "Na Área Operacional",
+                })
+                if "Última Compra" in d.columns:
+                    d["Última Compra"] = pd.to_datetime(d["Última Compra"], errors="coerce").dt.strftime("%d/%m/%Y")
+                if "Na Área Operacional" in d.columns:
+                    d["Na Área Operacional"] = d["Na Área Operacional"].map({True:"✅ Sim", False:"⚠️ Não"}).fillna("❓ Sem CEP")
+                st.dataframe(d, use_container_width=True, hide_index=True)
+                return d
+
+            with sub_inat:
+                if inativos_c.empty:
+                    st.info("Nenhum cliente da carteira inativo acima do limite escolhido.")
+                else:
+                    d1 = _show_cart(inativos_c.sort_values("MesesSemComprar", ascending=False))
+                    buf1 = BytesIO(); d1.to_excel(buf1, index=False, engine="openpyxl"); buf1.seek(0)
+                    st.download_button("📥 Exportar inativos (xlsx)", buf1, file_name=f"carteira_inativos_{cons_v360}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="dl_cart_inat")
+
+            with sub_nunca:
+                nunca_df = cart_join[cart_join["NuncaComprou"]]
+                if nunca_df.empty:
+                    st.info("Todos os clientes da carteira já compraram alguma vez.")
+                else:
+                    d2 = _show_cart(nunca_df)
+                    buf2 = BytesIO(); d2.to_excel(buf2, index=False, engine="openpyxl"); buf2.seek(0)
+                    st.download_button("📥 Exportar nunca compraram (xlsx)", buf2, file_name=f"carteira_nunca_comprou_{cons_v360}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="dl_cart_nunca")
+
+            with sub_todos:
+                d3 = _show_cart(cart_join.sort_values("MesesSemComprar", ascending=False, na_position="first"))
+                buf3 = BytesIO(); d3.to_excel(buf3, index=False, engine="openpyxl"); buf3.seek(0)
+                st.download_button("📥 Exportar carteira completa (xlsx)", buf3, file_name=f"carteira_completa_{cons_v360}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="dl_cart_todos")
+
+    # ══════════════════════════════════════════════════════════
+    # ABA: MAIORES CLIENTES
+    # ══════════════════════════════════════════════════════════
+    with tab_r1:
+        if radar_base.empty:
+            st.info("Sem clientes no radar para este filtro.")
+        else:
+            top_vol = radar_base.sort_values("Total Compras", ascending=False).head(20).copy()
+            top_vol_show = top_vol[["Nome","Cidade","Endereço Completo","Total Compras","Última Compra","Última Concessionária",
+                                      "Marca Preferida","Sócio/Decisor Principal","Tel. Decisor","Na Carteira","Status"]].copy()
+            top_vol_show["Última Compra"] = pd.to_datetime(top_vol_show["Última Compra"]).dt.strftime("%d/%m/%Y")
+            top_vol_show["Na Carteira"] = top_vol.apply(lambda r: "✅ Sim" if r["Na Carteira"] else "⚠️ Não", axis=1)
+            st.dataframe(top_vol_show, use_container_width=True, hide_index=True)
+            _exportar_xlsx(top_vol, f"maiores_clientes_{cons_v360}.xlsx", "📥 Exportar maiores clientes (xlsx)")
+
+    # ══════════════════════════════════════════════════════════
+    # ABA: RADAR COMPLETO
+    # ══════════════════════════════════════════════════════════
+    with tab_r2:
+        if radar_base.empty:
+            st.info("Sem clientes no radar para este filtro.")
+        else:
+            filtro_status = st.multiselect("Filtrar status", radar_base["Status"].unique().tolist(),
+                                            default=radar_base["Status"].unique().tolist(), key="v360_filtro")
+            radar_f = radar_base[radar_base["Status"].isin(filtro_status)].sort_values("Score", ascending=False).copy()
+            radar_show = radar_f[["Nome","Cidade","Score","Status","Previsão","Meses Sem Comprar","Total Compras",
+                                   "Última Concessionária","Sócio/Decisor Principal","Na Carteira"]].copy()
+            radar_show["Na Carteira"] = radar_f.apply(lambda r: "✅ Sim" if r["Na Carteira"] else "⚠️ Não", axis=1)
+            st.dataframe(radar_show, use_container_width=True, hide_index=True)
+            _exportar_xlsx(radar_f, f"radar_completo_{cons_v360}.xlsx", "📥 Exportar radar completo (xlsx)")
+
+    # ══════════════════════════════════════════════════════════
+    # ABA: PROSPECÇÃO — 4 listas semanais de 12 clientes (1 mês)
+    # ══════════════════════════════════════════════════════════
+    with tab_r3:
+        st.caption("O mês é dividido em 4 listas de até 12 clientes — uma por semana — para não repetir visita e cobrir o máximo de propensão possível.")
+        incluir_mornos = st.checkbox("Incluir também 🟡 Mornos para completar as listas", value=True, key="v360_incl_mornos")
+        status_alvo = ["🔥 Quente"] + (["🟡 Morno"] if incluir_mornos else [])
+        pool = radar_base[radar_base["Status"].isin(status_alvo)].sort_values("Score", ascending=False).reset_index(drop=True) if not radar_base.empty else pd.DataFrame()
+
+        if pool.empty:
+            st.info("Nenhum cliente 🔥/🟡 no momento com os filtros atuais. Revise o filtro de cidade ou marque 'incluir mornos'.")
+        else:
+            st.markdown(f'<div class="alert-green">🎯 <strong>{len(pool)} clientes</strong> disponíveis para compor as 4 listas do mês</div>', unsafe_allow_html=True)
+            if "Dias Sem Visita" in pool.columns:
+                pool["_nunca_ou_atrasado"] = pool["Dias Sem Visita"].apply(lambda d: pd.isna(d) or d > 21)
+
+            semanas_labels = [f"Semana {i+1}" for i in range(4)]
+            tabs_semana = st.tabs(semanas_labels)
             msg_wa_v = "Olá! Entro em contato da Comercial De Nigris para conversar sobre a frota da sua empresa."
-            for idx, row in semana.iterrows():
-                tag_visita = ""
-                if "Dias Sem Visita" in semana.columns:
-                    if pd.notna(row.get("Última Visita")):
-                        dv = int(row["Dias Sem Visita"])
-                        tag_visita = f' · 🕓 última visita há {dv}d' + (' ⚠️' if dv > 21 else '')
-                    else:
-                        tag_visita = ' · 🚫 nunca visitado ⚠️'
-                with st.expander(f"{idx+1}. {row['Nome']} — {row['Status']} (score {row['Score']:.0f}){tag_visita}"):
-                    st.markdown(f"**Endereço:** {row['Endereço Completo']}")
-                    st.markdown(f"**CNPJ:** {row['CNPJ']}  ·  **Na carteira:** {'✅ Sim' if row['Na Carteira'] else '⚠️ Não — oportunidade nova'}")
-                    st.markdown(f"**Por quê agora:** {row['Motivo']}")
-                    st.markdown(f"**Última compra:** {row['Último Modelo']} em {pd.Timestamp(row['Última Compra']).strftime('%m/%Y')} pela **{row['Última Concessionária']}**"
-                                + (" _(comprou de nós antes)_" if row["Comprou De Nigris Antes"]=="✅ Sim" else " _(comprou de concorrente)_"))
-                    st.markdown(f"**Histórico completo:** {row['Histórico Completo']}")
-                    if row["Todos os Sócios"] != "—":
-                        st.markdown(f"**Sócios/decisores:** {row['Todos os Sócios']}")
-                    cbtn1, cbtn2 = st.columns(2)
-                    with cbtn1:
-                        if row["Tel. Decisor (wa)"]:
-                            st.markdown(f'<a href="https://wa.me/{row["Tel. Decisor (wa)"]}?text={msg_wa_v}" target="_blank" class="contact-btn btn-whatsapp" style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;">💬 WhatsApp decisor ({row["Tel. Decisor"]})</a>', unsafe_allow_html=True)
-                    with cbtn2:
-                        if row["Tel. Geral (wa)"]:
-                            st.markdown(f'<a href="https://wa.me/{row["Tel. Geral (wa)"]}?text={msg_wa_v}" target="_blank" class="contact-btn btn-whatsapp" style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;">💬 WhatsApp geral ({row["Tel. Geral"]})</a>', unsafe_allow_html=True)
-            _exportar_xlsx(semana, f"prospeccao_{cons_v360}.xlsx", "📥 Exportar lista de prospecção completa (xlsx)")
+            todas_semanas_frames = []
+
+            for w in range(4):
+                bloco = pool.iloc[w*12:(w+1)*12].reset_index(drop=True)
+                todas_semanas_frames.append(bloco.assign(Semana=f"Semana {w+1}"))
+                with tabs_semana[w]:
+                    if bloco.empty:
+                        st.info("Sem clientes suficientes para completar esta semana com o filtro atual.")
+                        continue
+                    for idx, row in bloco.iterrows():
+                        tag_visita = ""
+                        if "Dias Sem Visita" in bloco.columns:
+                            if pd.notna(row.get("Última Visita")):
+                                dv = int(row["Dias Sem Visita"])
+                                tag_visita = f' · 🕓 última visita há {dv}d' + (' ⚠️' if dv > 21 else '')
+                            else:
+                                tag_visita = ' · 🚫 nunca visitado ⚠️'
+                        with st.expander(f"{idx+1}. {row['Nome']} — {row['Status']} (score {row['Score']:.0f}){tag_visita}"):
+                            st.markdown(f"**Endereço:** {row['Endereço Completo']}")
+                            st.markdown(f"**CNPJ:** {row['CNPJ']}  ·  **Na carteira:** {'✅ Sim' if row['Na Carteira'] else '⚠️ Não — oportunidade nova'}")
+                            st.markdown(f"**Por quê agora:** {row['Motivo']}")
+                            st.markdown(f"**Última compra:** {row['Último Modelo']} em {pd.Timestamp(row['Última Compra']).strftime('%m/%Y')} pela **{row['Última Concessionária']}**"
+                                        + (" _(comprou de nós antes)_" if row["Comprou De Nigris Antes"]=="✅ Sim" else " _(comprou de concorrente)_"))
+                            st.markdown(f"**Histórico completo:** {row['Histórico Completo']}")
+                            if row["Todos os Sócios"] != "—":
+                                st.markdown(f"**Sócios/decisores:** {row['Todos os Sócios']}")
+                            cbtn1, cbtn2 = st.columns(2)
+                            with cbtn1:
+                                if row["Tel. Decisor (wa)"]:
+                                    st.markdown(f'<a href="https://wa.me/{row["Tel. Decisor (wa)"]}?text={msg_wa_v}" target="_blank" class="contact-btn btn-whatsapp" style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;">💬 WhatsApp decisor ({row["Tel. Decisor"]})</a>', unsafe_allow_html=True)
+                            with cbtn2:
+                                if row["Tel. Geral (wa)"]:
+                                    st.markdown(f'<a href="https://wa.me/{row["Tel. Geral (wa)"]}?text={msg_wa_v}" target="_blank" class="contact-btn btn-whatsapp" style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;">💬 WhatsApp geral ({row["Tel. Geral"]})</a>', unsafe_allow_html=True)
+                    _exportar_xlsx(bloco, f"prospeccao_semana{w+1}_{cons_v360}.xlsx", f"📥 Exportar Semana {w+1} (xlsx)", key_extra=f"sem{w+1}")
+
+            if any(not f.empty for f in todas_semanas_frames):
+                mes_completo = pd.concat(todas_semanas_frames, ignore_index=True)
+                cols_mes = ["Semana"] + [c for c in COLS_EXPORT if c in mes_completo.columns]
+                buf_mes = BytesIO(); mes_completo[cols_mes].to_excel(buf_mes, index=False, engine="openpyxl"); buf_mes.seek(0)
+                st.download_button("📥 Exportar as 4 semanas juntas (xlsx)", buf_mes, file_name=f"prospeccao_mes_{cons_v360}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="dl_mes_completo")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PÁGINA: ADMIN
