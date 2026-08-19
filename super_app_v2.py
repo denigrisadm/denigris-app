@@ -2134,8 +2134,12 @@ elif pagina == "emplacamentos":
 
     # Seleção de consultor
     if perfil in ("gestor","gerente"):
-        cons_list = ["Todos"] + sorted(df_area[df_area["Consultor"] != "ZONA LIVRE"]["Consultor"].unique().tolist())
-        sel_cons = st.selectbox("Consultor:", cons_list)
+        pares_emp = lista_vendedores_disponiveis(df_area, df_cart)
+        cons_list = ["Todos"] + [p[1] for p in pares_emp]
+        labels_emp = ["Todos"] + [p[0] for p in pares_emp]
+        map_lbl_emp = dict(zip(labels_emp, cons_list))
+        sel_cons_lbl = st.selectbox("Consultor:", labels_emp)
+        sel_cons = map_lbl_emp[sel_cons_lbl]
     else:
         sel_cons = cons_key
 
@@ -2176,7 +2180,8 @@ elif pagina == "emplacamentos":
         munic_area = df_area[df_area["Consultor"] != "ZONA LIVRE"][col_c].dropna().unique().tolist()
         cep_ranges = df_area[df_area["CEP_ini_norm"] != ""][["CEP_ini_norm","CEP_fim_norm"]].values.tolist()
         cnpjs_carteira = df_cart["CNPJ_NORM"].unique() if df_cart is not None else []
-        vendedores_area = df_area[df_area["Consultor"] != "ZONA LIVRE"]["Consultor"].unique().tolist()
+        vendedores_area = sorted(set(df_area[df_area["Consultor"] != "ZONA LIVRE"]["Consultor"].unique().tolist())
+                                  | set(norm_str_series(df_cart["VENDEDOR"]).unique().tolist() if df_cart is not None else []))
     else:
         munic_area, cep_ranges = get_munic_area(sel_cons, df_area)
         if df_cart is not None:
@@ -2866,6 +2871,11 @@ elif pagina == "gestao":
         mes_s_g = st.multiselect("Meses", mes_labels_dados, default=mes_labels_dados)
         mes_nums_g = [k for k,v in MESES_PT.items() if v in mes_s_g]
     with f3: cons_s_g = st.selectbox("Consultor", cons_g)
+    if df_area is not None:
+        _vendors_sem_area_g = sorted(set(norm_str_series(df_cart["VENDEDOR"]).unique().tolist()) - set(df_area["Consultor"].unique().tolist())) if df_cart is not None else []
+        if _vendors_sem_area_g:
+            st.caption("⚠️ Esta página atribui consultor por cidade (planilha de Área) e ainda não usa a Carteira como nesta versão do Vendedor 360 — "
+                       f"{len(_vendors_sem_area_g)} vendedor(es) sem faixa de área cadastrada não aparecem aqui corretamente. Use a aba 🧭 Vendedor 360 para o número certo desses casos.")
 
     df_g = df_emp.copy()
     if anos_s_g: df_g = df_g[df_g["Ano"].isin(anos_s_g)]
@@ -3556,7 +3566,7 @@ elif pagina == "admin":
         st.markdown("""
         <div class="alert-blue" style="margin-bottom:14px;">
         💡 <strong>Como funciona o vínculo:</strong><br>
-        • Para <strong>vendedores</strong> — selecione o nome exato da planilha de Área Operacional.<br>
+        • Para <strong>vendedores</strong> — selecione o nome exato como aparece na planilha de Área Operacional <em>ou</em> na de Carteira (a lista abaixo já une as duas fontes).<br>
         • O sistema vai filtrar automaticamente a carteira e os emplacamentos desse consultor.<br>
         • Para <strong>gerente/gestor</strong> — o vínculo com consultor não é necessário.
         </div>
@@ -3664,6 +3674,52 @@ elif pagina == "admin":
                 se = f"✅ {len(df_emp):,} registros<br><small>{anos_str}</small>"
             else: se = "⚠️ Não carregados"
             st.markdown(f'<div class="kpi-card"><div class="kpi-label">Emplacamentos</div><div class="kpi-value" style="font-size:14px;">{se}</div></div>', unsafe_allow_html=True)
+
+        # ── Auditoria automática: vendedores sem cruzamento, faixas de CEP conflitantes ──
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown('<div class="sec-title">🔍 Auditoria de Integridade</div>', unsafe_allow_html=True)
+        if df_area is not None and df_cart is not None:
+            nomes_area_set = set(df_area[df_area["Consultor"] != "ZONA LIVRE"]["Consultor"].unique().tolist())
+            nomes_cart_set = set(k for k in norm_str_series(df_cart["VENDEDOR"]).unique().tolist() if k)
+            so_area = nomes_area_set - nomes_cart_set
+            so_cart = nomes_cart_set - nomes_area_set
+
+            aud1, aud2 = st.columns(2)
+            with aud1:
+                if so_area:
+                    st.warning(f"⚠️ **{len(so_area)} vendedor(es)** têm faixa de CEP na Área mas nenhum cliente na Carteira: "
+                               + ", ".join(nome_display_vendedor(n, df_area, df_cart) for n in sorted(so_area)))
+                else:
+                    st.success("✅ Todo vendedor da Área também tem carteira.")
+            with aud2:
+                if so_cart:
+                    st.warning(f"⚠️ **{len(so_cart)} vendedor(es)** têm Carteira mas nenhuma faixa de CEP na Área — "
+                               "no Vendedor 360 eles aparecem só com os clientes da carteira, sem cobertura geográfica: "
+                               + ", ".join(nome_display_vendedor(n, df_area, df_cart) for n in sorted(so_cart)))
+                else:
+                    st.success("✅ Todo vendedor da Carteira também tem área definida.")
+
+            # Sobreposição de faixas de CEP entre vendedores diferentes
+            rows_cep = df_area[(df_area["Consultor"] != "ZONA LIVRE") & (df_area["CEP_ini_norm"] != "")][
+                ["Consultor","CEP_ini_norm","CEP_fim_norm"]].values.tolist()
+            overlaps = []
+            for i in range(len(rows_cep)):
+                for j in range(i+1, len(rows_cep)):
+                    c1,i1,f1 = rows_cep[i]; c2,i2,f2 = rows_cep[j]
+                    if c1 == c2: continue
+                    if i1 <= f2 and i2 <= f1:
+                        par = tuple(sorted([c1,c2]))
+                        if par not in [tuple(sorted([o[0],o[1]])) for o in overlaps]:
+                            overlaps.append((c1,c2,max(i1,i2),min(f1,f2)))
+            if overlaps:
+                st.error(f"🚫 **{len(overlaps)} sobreposição(ões) de CEP** entre vendedores diferentes na planilha de Área — isso gera ambiguidade de quem atende o cliente:")
+                for c1,c2,ini,fim in overlaps:
+                    n1 = nome_display_vendedor(c1, df_area, df_cart); n2 = nome_display_vendedor(c2, df_area, df_cart)
+                    st.markdown(f"&nbsp;&nbsp;• **{n1}** × **{n2}** — CEP {ini[:5]}-{ini[5:]} a {fim[:5]}-{fim[5:]}")
+            else:
+                st.success("✅ Nenhuma faixa de CEP sobreposta entre vendedores diferentes.")
+        else:
+            st.info("Carregue Área e Carteira para rodar a auditoria de integridade.")
 
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("""
