@@ -1273,6 +1273,50 @@ if st.session_state.users_db is None:
 USERS = st.session_state.users_db
 
 # ════════════════════════════════════════════════════════════════
+# SESSÃO PERSISTENTE — mantém o login ao atualizar a página (F5)
+# ════════════════════════════════════════════════════════════════
+def _gerar_token_sessao(login_key, u_data_tok):
+    return hash_senha(f"{login_key}|{u_data_tok.get('senha_hash','')}|denigris360app")
+
+def _get_query_params():
+    try:
+        return dict(st.query_params)
+    except Exception:
+        try:
+            return {k: (v[0] if isinstance(v, list) else v) for k, v in st.experimental_get_query_params().items()}
+        except Exception:
+            return {}
+
+def _set_query_params(**kwargs):
+    try:
+        for k, v in kwargs.items():
+            st.query_params[k] = v
+    except Exception:
+        try:
+            atuais = _get_query_params()
+            atuais.update(kwargs)
+            st.experimental_set_query_params(**atuais)
+        except Exception:
+            pass
+
+def _clear_query_params():
+    try:
+        st.query_params.clear()
+    except Exception:
+        try:
+            st.experimental_set_query_params()
+        except Exception:
+            pass
+
+if st.session_state.user is None:
+    _qp = _get_query_params()
+    _q_user = str(_qp.get("u", "")).strip().upper()
+    _q_tok = str(_qp.get("t", "")).strip()
+    if _q_user and _q_tok and _q_user in USERS:
+        if _gerar_token_sessao(_q_user, USERS[_q_user]) == _q_tok:
+            st.session_state.user = _q_user
+
+# ════════════════════════════════════════════════════════════════
 # DADOS: só carrega APÓS login, com spinner discreto
 # ════════════════════════════════════════════════════════════════
 def carregar_dados_se_necessario():
@@ -1366,6 +1410,7 @@ if st.session_state.user is None:
                 )
                 if senha_ok:
                     st.session_state.user = key
+                    _set_query_params(u=key, t=_gerar_token_sessao(key, u))
                     registrar_acesso(key)
                     st.rerun()
                 else:
@@ -1455,6 +1500,7 @@ for i, (pid, picon, plabel) in enumerate(PAGINAS):
 with nav_cols[-1]:
     if st.button("🚪 Sair", key="sair"):
         st.session_state.user = None
+        _clear_query_params()
         st.rerun()
 
 # ════════════════════════════════════════════════════════════════
@@ -2850,107 +2896,172 @@ elif pagina == "painel":
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PÁGINA: GESTÃO & PERFORMANCE
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 elif pagina == "gestao":
     st.markdown("""<div class="page-header"><h1>📈 Gestão & Performance</h1>
-    <p>Análise detalhada por período e consultor</p></div>""", unsafe_allow_html=True)
+    <p>Quem emplacou, o quê, e quem atende — mês atual por padrão</p></div>""", unsafe_allow_html=True)
     if df_emp is None: st.warning("⚠️ Dados não carregados."); st.stop()
 
+    hoje_g = pd.Timestamp.now()
+    ano_atual_g, mes_atual_g = hoje_g.year, hoje_g.month
+
     anos_g = sorted([int(a) for a in df_emp["Ano"].dropna().unique()], reverse=True)
-    cons_g = ["Todos"] + (sorted(df_area[df_area["Consultor"]!="ZONA LIVRE"]["Consultor"].str.title().unique().tolist()) if df_area is not None else [])
-    marcas_g = ["Todas"] + sorted(df_emp["Marca"].dropna().unique().tolist())
-    # Meses com dados reais
-    meses_com_dados = sorted(df_emp["Mes"].unique().tolist())
-    mes_labels_dados = [MESES_PT[m] for m in meses_com_dados]
+    default_anos_g = [ano_atual_g] if ano_atual_g in anos_g else (anos_g[:1] if anos_g else [])
 
-    f1,f2,f3 = st.columns(3)
-    with f1: anos_s_g = st.multiselect("Anos", anos_g, default=anos_g)
+    f1, f2, f3 = st.columns([1.2, 1, 1.4])
+    with f1:
+        anos_s_g = st.multiselect("Ano(s)", anos_g, default=default_anos_g, key="gestao_anos")
     with f2:
-        mes_s_g = st.multiselect("Meses", mes_labels_dados, default=mes_labels_dados)
-        mes_nums_g = [k for k,v in MESES_PT.items() if v in mes_s_g]
-    with f3: cons_s_g = st.selectbox("Consultor", cons_g)
-    if df_area is not None:
-        _vendors_sem_area_g = sorted(set(norm_str_series(df_cart["VENDEDOR"]).unique().tolist()) - set(df_area["Consultor"].unique().tolist())) if df_cart is not None else []
-        if _vendors_sem_area_g:
-            st.caption("⚠️ Esta página atribui consultor por cidade (planilha de Área) e ainda não usa a Carteira como nesta versão do Vendedor 360 — "
-                       f"{len(_vendors_sem_area_g)} vendedor(es) sem faixa de área cadastrada não aparecem aqui corretamente. Use a aba 🧭 Vendedor 360 para o número certo desses casos.")
+        ver_ano_todo_g = st.checkbox("Ano todo (acumulado)", value=False, key="gestao_ano_todo",
+                                      help="Desmarcado = só o mês atual. Marque para ver todos os meses do(s) ano(s) selecionado(s).")
+    with f3:
+        pass
 
+    meses_disp_g = sorted(df_emp[df_emp["Ano"].isin(anos_s_g)]["Mes"].dropna().unique().tolist()) if anos_s_g else []
+    if ver_ano_todo_g:
+        mes_nums_g = []  # sem filtro de mês = ano inteiro
+    else:
+        default_mes_g = [mes_atual_g] if mes_atual_g in meses_disp_g else (meses_disp_g[-1:] if meses_disp_g else [])
+        mes_s_g = st.multiselect("Mês(es)", [MESES_PT[m] for m in meses_disp_g],
+                                  default=[MESES_PT[m] for m in default_mes_g], key="gestao_meses")
+        mes_nums_g = [k for k, v in MESES_PT.items() if v in mes_s_g]
+
+    # ── Aplicar ano/mês primeiro (reduz o volume antes dos filtros mais pesados) ──
     df_g = df_emp.copy()
     if anos_s_g: df_g = df_g[df_g["Ano"].isin(anos_s_g)]
     if mes_nums_g: df_g = df_g[df_g["Mes"].isin(mes_nums_g)]
-    if cons_s_g != "Todos" and df_area is not None:
-        mc_g = df_area.groupby("Municipio_norm")["Consultor"].first().to_dict()
-        df_g["_cons"] = df_g["NO_CIDADE_NORM"].map(mc_g).fillna("").str.title()
-        df_g = df_g[df_g["_cons"] == cons_s_g]
 
-    if df_g.empty: st.warning("Sem dados."); st.stop()
+    fc1, fc2 = st.columns([1.4, 1])
+    with fc1:
+        cidades_g_disp = sorted(df_g["NO_CIDADE"].dropna().unique().tolist())
+        sel_cidades_g = st.multiselect("Cidade(s)", cidades_g_disp, default=[], key="gestao_cidades",
+                                        placeholder="Todas as cidades do período selecionado")
+    with fc2:
+        pares_g = lista_vendedores_disponiveis(df_area, df_cart)
+        cons_g_labels = ["Todos"] + [p[0] for p in pares_g]
+        map_g_lbl_to_key = {"Todos": "Todos"}
+        map_g_lbl_to_key.update({p[0]: p[1] for p in pares_g})
+        cons_s_g_lbl = st.selectbox("Consultor", cons_g_labels, key="gestao_consultor")
 
+    if sel_cidades_g:
+        df_g = df_g[df_g["NO_CIDADE"].isin(sel_cidades_g)]
+
+    if df_g.empty:
+        st.warning("Sem emplacamentos para o período/filtro selecionado. Tente 'Ano todo' ou outro mês.")
+        st.stop()
+
+    # ── Atribuição de consultor: CARTEIRA tem prioridade (dono real do cliente); ──
+    # cidade (planilha de Área) é só fallback para quem ainda não é de ninguém.
+    # 100% vetorizado — sem loop por linha, mantém a página rápida mesmo com o ano inteiro.
+    label_by_key_g = {p[1]: p[0] for p in pares_g}
+    cnpj_to_vendkey_g = {}
+    if df_cart is not None:
+        _tmp_cart_g = df_cart.dropna(subset=["CNPJ_NORM"])
+        cnpj_to_vendkey_g = dict(zip(_tmp_cart_g["CNPJ_NORM"], norm_str_series(_tmp_cart_g["VENDEDOR"])))
+    mc_gx = df_area.groupby("Municipio_norm")["Consultor"].first().to_dict() if df_area is not None else {}
+
+    df_g["_vend_key"] = df_g["CNPJ_NORM"].map(cnpj_to_vendkey_g)
+    df_g["_vend_key"] = df_g["_vend_key"].fillna(df_g["NO_CIDADE_NORM"].map(mc_gx))
+    df_g["Consultor"] = df_g["_vend_key"].map(label_by_key_g).fillna("Sem consultor definido")
+
+    if cons_s_g_lbl != "Todos":
+        cons_s_g_key = map_g_lbl_to_key[cons_s_g_lbl]
+        df_g = df_g[df_g["_vend_key"] == cons_s_g_key]
+        if df_g.empty:
+            st.warning(f"Sem emplacamentos de {cons_s_g_lbl} no período/cidade selecionados.")
+            st.stop()
+
+    # ── KPIs do período ──
     total_g = len(df_g); nigris_g = int(is_denigris(df_g["Concessionário"]).sum())
     conc_g = total_g - nigris_g; ms_g = round(nigris_g/total_g*100,1) if total_g else 0
+    periodo_lbl = ("Ano todo" if ver_ano_todo_g else ", ".join(MESES_PT[m] for m in mes_nums_g)) if anos_s_g else "—"
+
+    st.markdown(f'<div class="alert-blue">📅 Período: <strong>{periodo_lbl} · {", ".join(str(a) for a in anos_s_g) if anos_s_g else "—"}</strong></div>', unsafe_allow_html=True)
 
     k1,k2,k3,k4,k5 = st.columns(5)
     with k1: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Emplacamentos</div><div class="kpi-value">{total_g:,}</div></div>', unsafe_allow_html=True)
-    with k2: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Clientes</div><div class="kpi-value">{df_g["CNPJ_NORM"].nunique()}</div></div>', unsafe_allow_html=True)
+    with k2: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Clientes Únicos</div><div class="kpi-value">{df_g["CNPJ_NORM"].nunique()}</div></div>', unsafe_allow_html=True)
     with k3: st.markdown(f'<div class="kpi-card"><div class="kpi-label">De Nigris</div><div class="kpi-value green">{nigris_g}</div></div>', unsafe_allow_html=True)
     with k4: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Concorrente</div><div class="kpi-value red">{conc_g}</div></div>', unsafe_allow_html=True)
     with k5: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Market Share</div><div class="kpi-value blue">{ms_g}%</div></div>', unsafe_allow_html=True)
 
-    if df_area is not None:
-        st.markdown('<div class="sec-title">👥 Por Consultor</div>', unsafe_allow_html=True)
-        mc_gx = df_area.groupby("Municipio_norm")["Consultor"].first().to_dict()
-        df_g["Consultor"] = df_g["NO_CIDADE_NORM"].map(mc_gx).fillna("Sem consultor").str.title()
-        perf = df_g.groupby("Consultor").agg(
-            Total=("Chassi","count"),
-            Nigris=("Concessionário", lambda x: is_denigris(x).sum()),
-            Conc=("Concessionário", lambda x: (~is_denigris(x)).sum()),
-            Clientes=("CNPJ_NORM","nunique"),
-        ).reset_index().sort_values("Total",ascending=False)
-        perf["% Nigris"] = (perf["Nigris"]/perf["Total"]*100).round(1).astype(str)+"%"
+    # ── Por Consultor ──
+    st.markdown('<div class="sec-title">👥 Por Consultor</div>', unsafe_allow_html=True)
+    perf = df_g.groupby("Consultor").agg(
+        Total=("Chassi","count"),
+        Nigris=("Concessionário", lambda x: is_denigris(x).sum()),
+        Conc=("Concessionário", lambda x: (~is_denigris(x)).sum()),
+        Clientes=("CNPJ_NORM","nunique"),
+    ).reset_index().sort_values("Total",ascending=False)
+    perf["% Nigris"] = (perf["Nigris"]/perf["Total"]*100).round(1).astype(str)+"%"
 
-        fig_c = go.Figure()
-        fig_c.add_trace(go.Bar(name="De Nigris", x=perf["Consultor"], y=perf["Nigris"], marker_color="#0a1628"))
-        fig_c.add_trace(go.Bar(name="Concorrente", x=perf["Consultor"], y=perf["Conc"], marker_color="#c8a84b"))
-        fig_c.update_layout(barmode="stack", plot_bgcolor="#fff", paper_bgcolor="#fff",
-            font_color="#4a5568", height=300, legend=dict(font=dict(color="#4a5568")),
-            xaxis=dict(showgrid=False, tickangle=-30), yaxis=dict(showgrid=True, gridcolor="#f0f2f7"),
-            margin=dict(t=10,b=10,l=10,r=10))
-        st.plotly_chart(fig_c, use_container_width=True)
-        perf_e = perf.copy(); perf_e["% Nigris"] = perf_e["% Nigris"]
-        perf_e = perf_e.rename(columns={"Consultor":"Consultor","Total":"Total","Nigris":"De Nigris","Conc":"Concorrente","Clientes":"Clientes","% Nigris":"% De Nigris"})
-        st.dataframe(perf_e, use_container_width=True, hide_index=True)
-
-    # Evolução mensal
-    st.markdown('<div class="sec-title">📅 Evolução Mensal</div>', unsafe_allow_html=True)
-    df_g["AnoMes"] = df_g["Ano"].astype(str)+"-"+df_g["Mes"].astype(str).str.zfill(2)
-    evol = df_g.groupby("AnoMes").agg(Total=("Chassi","count"),
-        Nigris=("Concessionário", lambda x: is_denigris(x).sum())).reset_index().sort_values("AnoMes")
-    evol["Conc"] = evol["Total"] - evol["Nigris"]
-    fig_e = go.Figure()
-    fig_e.add_trace(go.Scatter(x=evol["AnoMes"], y=evol["Nigris"], name="De Nigris",
-        mode="lines+markers", line=dict(color="#0a1628",width=3), marker=dict(size=6),
-        fill="tozeroy", fillcolor="rgba(10,22,40,0.07)"))
-    fig_e.add_trace(go.Scatter(x=evol["AnoMes"], y=evol["Conc"], name="Concorrente",
-        mode="lines+markers", line=dict(color="#c8a84b",width=2,dash="dot"), marker=dict(size=5)))
-    fig_e.update_layout(plot_bgcolor="#fff",paper_bgcolor="#fff",font_color="#4a5568",height=280,
-        legend=dict(font=dict(color="#4a5568")),
-        xaxis=dict(showgrid=False,tickangle=-45), yaxis=dict(showgrid=True,gridcolor="#f0f2f7"),
+    fig_c = go.Figure()
+    fig_c.add_trace(go.Bar(name="De Nigris", x=perf["Consultor"], y=perf["Nigris"], marker_color="#0a1628"))
+    fig_c.add_trace(go.Bar(name="Concorrente", x=perf["Consultor"], y=perf["Conc"], marker_color="#c8a84b"))
+    fig_c.update_layout(barmode="stack", plot_bgcolor="#fff", paper_bgcolor="#fff",
+        font_color="#4a5568", height=300, legend=dict(font=dict(color="#4a5568")),
+        xaxis=dict(showgrid=False, tickangle=-30), yaxis=dict(showgrid=True, gridcolor="#f0f2f7"),
         margin=dict(t=10,b=10,l=10,r=10))
-    st.plotly_chart(fig_e, use_container_width=True)
+    st.plotly_chart(fig_c, use_container_width=True)
+    perf_e = perf.rename(columns={"Total":"Total","Nigris":"De Nigris","Conc":"Concorrente","Clientes":"Clientes","% Nigris":"% De Nigris"})
+    st.dataframe(perf_e, use_container_width=True, hide_index=True)
 
-    # Exports
-    ex1,ex2,ex3 = st.columns(3)
-    with ex1:
-        _exp_cols = [c for c in ["Data emplacamento","NOMEPROPRIETARIO","NO_CIDADE","Marca","Modelo","Concessionário"] if c in df_g.columns]
-        buf=BytesIO(); df_g[_exp_cols].to_excel(buf,index=False,engine="openpyxl"); buf.seek(0)
-        st.download_button("📄 Base Filtrada", buf, file_name="base_filtrada.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    with ex2:
-        if df_area is not None:
-            buf2=BytesIO(); perf_e.to_excel(buf2,index=False,engine="openpyxl"); buf2.seek(0)
-            st.download_button("👥 Consultores", buf2, file_name="consultores.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    # ── Clientes que emplacaram no período — o "quem é quem" pedido ──
+    st.markdown('<div class="sec-title">🧾 Clientes que Emplacaram no Período</div>', unsafe_allow_html=True)
+    busca_cli_g = st.text_input("", placeholder="🔍 Buscar cliente por nome...", label_visibility="collapsed", key="gestao_busca_cliente")
+
+    cnpjs_cart_all_g = set(df_cart["CNPJ_NORM"].dropna()) if df_cart is not None else set()
+
+    cli_g = df_g.groupby("CNPJ_NORM").agg(
+        Nome=("NOMEPROPRIETARIO", "last"),
+        Cidade=("NO_CIDADE", "last"),
+        CNPJ=("CPFCNPJPROPRIETARIO", "last"),
+        **{"Qtd. Chassi": ("Chassi", "count")},
+        Consultor=("Consultor", "last"),
+    ).reset_index()
+    cli_g["Modelos"] = df_g.groupby("CNPJ_NORM")["Modelo"].apply(lambda s: ", ".join(sorted(set(s.dropna().astype(str))))).values
+    cli_g["Marcas"] = df_g.groupby("CNPJ_NORM")["Marca"].apply(lambda s: ", ".join(sorted(set(s.dropna().astype(str))))).values
+    cli_g["Concessionária(s)"] = df_g.groupby("CNPJ_NORM")["Concessionário"].apply(lambda s: ", ".join(sorted(set(s.dropna().astype(str))))).values
+    cli_g["De Nigris?"] = df_g.groupby("CNPJ_NORM")["Concessionário"].apply(lambda x: "✅ Sim" if is_denigris(x).any() else "⚠️ Não").values
+    cli_g["Na Carteira"] = cli_g["CNPJ_NORM"].isin(cnpjs_cart_all_g).map({True: "✅ Sim", False: "⚠️ Não — oportunidade"})
+    cli_g = cli_g.sort_values("Qtd. Chassi", ascending=False)
+
+    if busca_cli_g.strip():
+        q_cli_g = norm_str(busca_cli_g.strip())
+        cli_g = cli_g[norm_str_series(cli_g["Nome"]).str.contains(q_cli_g, na=False, regex=False)]
+
+    st.caption(f"{len(cli_g)} cliente(s) únicos emplacaram no período — cada linha é um cliente, com tudo que ele comprou nesse recorte.")
+    cli_g_show = cli_g[["Nome","CNPJ","Cidade","Consultor","Qtd. Chassi","Marcas","Modelos","Concessionária(s)","De Nigris?","Na Carteira"]]
+    st.dataframe(cli_g_show, use_container_width=True, hide_index=True)
+
+    buf_cli = BytesIO(); cli_g_show.to_excel(buf_cli, index=False, engine="openpyxl"); buf_cli.seek(0)
+    st.download_button("📥 Exportar clientes do período (xlsx)", buf_cli, file_name="clientes_periodo_gestao.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    # ── Evolução mensal (só faz sentido com mais de um mês no filtro) ──
+    if ver_ano_todo_g or len(mes_nums_g) > 1 or len(anos_s_g) > 1:
+        st.markdown('<div class="sec-title">📅 Evolução Mensal</div>', unsafe_allow_html=True)
+        df_g["AnoMes"] = df_g["Ano"].astype(str)+"-"+df_g["Mes"].astype(str).str.zfill(2)
+        evol = df_g.groupby("AnoMes").agg(Total=("Chassi","count"),
+            Nigris=("Concessionário", lambda x: is_denigris(x).sum())).reset_index().sort_values("AnoMes")
+        evol["Conc"] = evol["Total"] - evol["Nigris"]
+        fig_e = go.Figure()
+        fig_e.add_trace(go.Scatter(x=evol["AnoMes"], y=evol["Nigris"], name="De Nigris",
+            mode="lines+markers", line=dict(color="#0a1628",width=3), marker=dict(size=6),
+            fill="tozeroy", fillcolor="rgba(10,22,40,0.07)"))
+        fig_e.add_trace(go.Scatter(x=evol["AnoMes"], y=evol["Conc"], name="Concorrente",
+            mode="lines+markers", line=dict(color="#c8a84b",width=2,dash="dot"), marker=dict(size=5)))
+        fig_e.update_layout(plot_bgcolor="#fff",paper_bgcolor="#fff",font_color="#4a5568",height=280,
+            legend=dict(font=dict(color="#4a5568")),
+            xaxis=dict(showgrid=False,tickangle=-45), yaxis=dict(showgrid=True,gridcolor="#f0f2f7"),
+            margin=dict(t=10,b=10,l=10,r=10))
+        st.plotly_chart(fig_e, use_container_width=True)
+
+    # ── Export consultores ──
+    buf2=BytesIO(); perf_e.to_excel(buf2,index=False,engine="openpyxl"); buf2.seek(0)
+    st.download_button("👥 Exportar desempenho por consultor (xlsx)", buf2, file_name="consultores.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PÁGINA: OPORTUNIDADES
@@ -3927,18 +4038,7 @@ elif pagina == "mapa":
         c = norm_str(str(cidade_str))
         return COORDS_CIDADES.get(c)
 
-    def _haversine_km(lat1, lon1, lat2, lon2):
-        from math import radians, sin, cos, atan2, sqrt
-        R = 6371.0
-        p1, p2 = radians(lat1), radians(lat2)
-        dphi = radians(lat2 - lat1)
-        dlmb = radians(lon2 - lon1)
-        a = sin(dphi/2)**2 + cos(p1)*cos(p2)*sin(dlmb/2)**2
-        return R * 2 * atan2(sqrt(a), sqrt(1-a))
-
-    _HQ_LAT, _HQ_LON = COORDS_CIDADES["SAO BERNARDO DO CAMPO"]  # sede De Nigris
-
-    # ── Filtrar base ──
+    # ── Base: clientes NÃO cadastrados (o mapa é só para isso, por desenho) ──
     cnpjs_carteira = set(df_cart["CNPJ_NORM"].dropna().tolist()) if df_cart is not None else set()
 
     if perfil == "vendedor" and df_area is not None:
@@ -3947,7 +4047,6 @@ elif pagina == "mapa":
     else:
         df_mapa_base = df_emp.copy()
 
-    # Agrupar por cliente (último emplacamento)
     df_mapa_clientes = (
         df_mapa_base.sort_values("Data emplacamento", ascending=False)
         .groupby("CNPJ_NORM", as_index=False)
@@ -3956,17 +4055,18 @@ elif pagina == "mapa":
     vol_series = df_mapa_base.groupby("CNPJ_NORM")["Chassi"].count()
     df_mapa_clientes["volume"] = df_mapa_clientes["CNPJ_NORM"].map(vol_series).fillna(1).astype(int)
     df_mapa_clientes["em_carteira"] = df_mapa_clientes["CNPJ_NORM"].isin(cnpjs_carteira)
+    df_plot = df_mapa_clientes[~df_mapa_clientes["em_carteira"]].copy()
 
-    # ── Filtros (simplificado: mapa é só para prospecção — sempre NÃO cadastrados) ──
+    # ── Filtros simples: busca por nome/CNPJ + cidade(s) ──
     st.markdown('<div class="sec-title">🔎 Filtros</div>', unsafe_allow_html=True)
     col_f1, col_f2 = st.columns([2, 1])
     with col_f1:
         busca_mapa = st.text_input("", placeholder="🔍  Buscar por nome ou CNPJ...",
                                    label_visibility="collapsed", key="mapa_busca")
     with col_f2:
-        raio_km = st.slider("📍 Raio (km)", min_value=1, max_value=200, value=50, step=1)
-
-    df_plot = df_mapa_clientes[~df_mapa_clientes["em_carteira"]].copy()
+        cidades_mapa_disp = sorted(df_plot["NO_CIDADE"].dropna().unique().tolist())
+        sel_cidades_mapa = st.multiselect("Cidade(s)", cidades_mapa_disp, default=[], key="mapa_cidades",
+                                           placeholder="Todas as cidades")
 
     if busca_mapa.strip():
         q_m = norm_str(busca_mapa.strip())
@@ -3974,8 +4074,12 @@ elif pagina == "mapa":
         mask_nome_m = norm_str_series(df_plot["NOMEPROPRIETARIO"]).str.contains(q_m, na=False, regex=False)
         mask_cnpj_m = df_plot["CNPJ_NORM"].str.startswith(q_cnpj_m) if q_cnpj_m else pd.Series(False, index=df_plot.index)
         df_plot = df_plot[mask_nome_m | mask_cnpj_m]
+    if sel_cidades_mapa:
+        df_plot = df_plot[df_plot["NO_CIDADE"].isin(sel_cidades_mapa)]
 
-    # ── Geocodificar: prioriza endereço exato (rua/número do cliente), cai para cidade quando não disponível ──
+    # ── Coordenadas: usa endereço exato já geocodificado (cache existente, leitura local — sem chamada de rede)
+    #     e cai para o centro da cidade quando não há endereço exato ainda. Sem botão de geocodificação ao vivo:
+    #     era a parte lenta/instável da página (dependia de serviço externo respondendo na hora do clique). ──
     _end_cache = _load_endereco_cache()
 
     def _coords_cliente(row):
@@ -3989,44 +4093,14 @@ elif pagina == "mapa":
         lambda cn: bool(cn and cn in _end_cache and _end_cache[cn])
     )
 
-    # ── Botão para buscar endereço exato dos clientes ainda não geocodificados ──
-    # Só dispara quando o vendedor clica — nada roda automaticamente ao abrir a página.
-    _clientes_sem_geo = [
-        {"cnpj_norm": r["CNPJ_NORM"], "row": r.to_dict()}
-        for _, r in df_plot[~df_plot["_endereco_exato"]].iterrows()
-        if r["CNPJ_NORM"] and _end_cache.get(r["CNPJ_NORM"]) is not None  # não repete quem já falhou
-    ]
-    if _clientes_sem_geo:
-        col_geo1, col_geo2 = st.columns([3, 2])
-        with col_geo1:
-            st.caption(f"📍 {len(_clientes_sem_geo)} cliente(s) exibidos apenas pelo centro da cidade (endereço exato ainda não buscado).")
-        with col_geo2:
-            if st.button(f"🎯 Buscar endereço exato ({min(len(_clientes_sem_geo), 60)} agora)", use_container_width=True, key="btn_geocode_end"):
-                _feitos, _faltam = geocodificar_enderecos_pendentes(_clientes_sem_geo, limite=60)
-                st.session_state["_mapa_sig"] = None  # força reconstruir o mapa com as novas coordenadas
-                if _faltam:
-                    st.success(f"✅ {_feitos} endereço(s) geocodificado(s). Ainda faltam {_faltam} — clique de novo para continuar.")
-                else:
-                    st.success(f"✅ {_feitos} endereço(s) geocodificado(s). Todos os visíveis agora têm endereço exato!")
-                st.rerun()
-
     df_plot_sem_geo = df_plot[df_plot["_coords"].isna()]
     df_plot_geo = df_plot[df_plot["_coords"].notna()].copy()
     df_plot_geo["_lat"] = df_plot_geo["_coords"].apply(lambda x: x[0])
     df_plot_geo["_lon"] = df_plot_geo["_coords"].apply(lambda x: x[1])
 
-    # ── Filtro de Raio (agora funcional) — distância da sede (São Bernardo do Campo) ──
-    df_plot_geo["_dist_km"] = df_plot_geo.apply(
-        lambda r: _haversine_km(_HQ_LAT, _HQ_LON, r["_lat"], r["_lon"]), axis=1
-    )
-    fora_raio = int((df_plot_geo["_dist_km"] > raio_km).sum())
-    df_plot_geo = df_plot_geo[df_plot_geo["_dist_km"] <= raio_km].copy()
-
-    total_encontrados = len(df_plot)
     total_geo = len(df_plot_geo)
     sem_coords = len(df_plot_sem_geo)
 
-    # KPIs
     kc1, kc2, kc3 = st.columns(3)
     with kc1:
         st.markdown(f'<div class="kpi-card"><div class="kpi-label">Clientes Não Cadastrados no Mapa</div><div class="kpi-value" style="color:#C0392B;">{total_geo}</div></div>', unsafe_allow_html=True)
@@ -4034,23 +4108,19 @@ elif pagina == "mapa":
         n_exato = int(df_plot_geo["_endereco_exato"].sum()) if "_endereco_exato" in df_plot_geo.columns else 0
         st.markdown(f'<div class="kpi-card"><div class="kpi-label">Com Endereço Exato</div><div class="kpi-value" style="color:#1565C0;">{n_exato}/{total_geo}</div></div>', unsafe_allow_html=True)
     with kc3:
-        vol_total = int(df_plot_geo["volume"].sum())
+        vol_total = int(df_plot_geo["volume"].sum()) if total_geo else 0
         st.markdown(f'<div class="kpi-card"><div class="kpi-label">Total Emplacamentos</div><div class="kpi-value">{vol_total}</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
-
     if sem_coords > 0:
-        st.caption(f"ℹ️ {sem_coords} cliente(s) ocultados — cidade não mapeada.")
-    if fora_raio > 0:
-        st.caption(f"ℹ️ {fora_raio} cliente(s) ocultados — fora do raio de {raio_km} km selecionado.")
+        st.caption(f"ℹ️ {sem_coords} cliente(s) ocultados — cidade não mapeada nas coordenadas conhecidas.")
 
     if df_plot_geo.empty:
         st.info("Nenhum cliente encontrado para os filtros selecionados.")
         st.stop()
 
-    # ── Preparar JSON para o mapa ──
+    # ── Preparar dados para os marcadores ──
     import urllib.parse as _urlp_m
-
     clientes_json = []
     for _, row in df_plot_geo.iterrows():
         nome_c   = safe_str(row.get("NOMEPROPRIETARIO", ""))
@@ -4061,49 +4131,26 @@ elif pagina == "mapa":
         vol_c    = int(row.get("volume", 1))
         lat_c    = float(row["_lat"])
         lon_c    = float(row["_lon"])
-        em_cart  = bool(row.get("em_carteira", False))
         exato_c  = bool(row.get("_endereco_exato", False))
         endereco_c = montar_endereco_cliente(row) or cidade_c
 
-        if em_cart:
-            cor = "#1E7E34"
-        elif vol_c >= 10:
-            cor = "#8B0000"
-        elif vol_c >= 5:
-            cor = "#e53935"
-        else:
-            cor = "#1565C0"
+        cor = "#8B0000" if vol_c >= 10 else ("#e53935" if vol_c >= 5 else "#1565C0")
 
         if exato_c:
-            # Endereço exato (via CEP) — manda coordenada direta, o Waze/Maps já traça a rota
             gmaps_url = f"https://www.google.com/maps/search/?api=1&query={lat_c},{lon_c}"
             waze_url  = f"https://waze.com/ul?ll={lat_c},{lon_c}&navigate=yes"
         else:
-            # Sem endereço exato ainda — busca por nome + cidade (aproximado)
             addr_enc  = _urlp_m.quote(f"{nome_c}, {cidade_c}, Brasil")
             gmaps_url = f"https://www.google.com/maps/search/?api=1&query={addr_enc}"
             waze_url  = f"https://waze.com/ul?q={addr_enc}"
 
         clientes_json.append({
-            "nome": nome_c,
-            "cnpj": cnpj_c,
-            "cnpj_norm": cnpj_n,
-            "cidade": cidade_c,
-            "endereco": endereco_c,
-            "modelo": modelo_c,
-            "vol": vol_c,
-            "lat": lat_c,
-            "lon": lon_c,
-            "cor": cor,
-            "em_cart": em_cart,
-            "exato": exato_c,
-            "gmaps": gmaps_url,
-            "waze": waze_url,
-            "status_label": "✅ Cadastrado" if em_cart else "⚠️ Não Cadastrado",
-            "status_color": "#1E7E34" if em_cart else "#C0392B",
+            "nome": nome_c, "cnpj": cnpj_c, "cnpj_norm": cnpj_n, "cidade": cidade_c,
+            "endereco": endereco_c, "modelo": modelo_c, "vol": vol_c,
+            "lat": lat_c, "lon": lon_c, "cor": cor, "exato": exato_c,
+            "gmaps": gmaps_url, "waze": waze_url,
         })
 
-    # ── Renderizar mapa com Folium (funciona 100% no Streamlit) ──
     try:
         import folium
         from streamlit_folium import st_folium
@@ -4119,64 +4166,27 @@ elif pagina == "mapa":
     centro_lat = sum(c["lat"] for c in clientes_json) / len(clientes_json)
     centro_lon = sum(c["lon"] for c in clientes_json) / len(clientes_json)
 
-    # ── Mapa de calor (gestor/gerente) via toggle ──
-    if perfil in ("gestor", "gerente"):
-        col_tog1, col_tog2 = st.columns([1, 5])
-        with col_tog1:
-            modo_calor = st.toggle("🔥 Mapa de Calor", value=False, key="mapa_calor_toggle")
-    else:
-        modo_calor = False
-
-    # ── Cache do mapa: só reconstrói quando os dados realmente mudam ──
-    # (evita reprocessar milhares de marcadores a cada clique em qualquer widget da página)
+    # ── Cache do mapa: só reconstrói quando os dados realmente mudam (evita travar em cada clique) ──
     _mapa_sig = hashlib.md5(
-        ("|".join(sorted(f"{c['cnpj_norm']}" for c in clientes_json))
-         + f"|calor={modo_calor}|raio={raio_km}").encode()
+        ("|".join(sorted(c["cnpj_norm"] for c in clientes_json))).encode()
     ).hexdigest()
 
     if st.session_state.get("_mapa_sig") == _mapa_sig and st.session_state.get("_mapa_obj") is not None:
         m = st.session_state["_mapa_obj"]
     else:
-        # Construir mapa Folium
-        m = folium.Map(
-            location=[centro_lat, centro_lon],
-            zoom_start=10,
-            tiles="CartoDB positron",
-            prefer_canvas=True,
-        )
+        from folium.plugins import MarkerCluster
+        m = folium.Map(location=[centro_lat, centro_lon], zoom_start=10, tiles="CartoDB positron", prefer_canvas=True)
+        cluster = MarkerCluster(name="Clientes").add_to(m)
 
-        if modo_calor:
-            # Mapa de calor — peso = volume normalizado (mantém granularidade por cliente)
-            from folium.plugins import HeatMap
-            heat_data = [[c["lat"], c["lon"], min(c["vol"] / 10.0, 1.0)] for c in clientes_json]
-            HeatMap(heat_data, radius=30, blur=25, max_zoom=13).add_to(m)
-        else:
-            # ── Marcador individual por cliente, agrupado por um MarkerCluster real do Leaflet ──
-            # Cada cliente aparece no seu próprio marcador (endereço exato quando já geocodificado
-            # por CEP, ou centro da cidade como aproximação). O MarkerCluster junta visualmente os
-            # marcadores próximos quando o mapa está com zoom afastado (mostrando só a contagem) e
-            # os separa automaticamente ao aproximar o zoom — é isso que evita o travamento com
-            # muitos clientes, sem esconder ninguém individualmente.
-            from folium.plugins import MarkerCluster
-            cluster = MarkerCluster(name="Clientes").add_to(m)
-
-            for c in clientes_json:
-                if c["em_cart"]:
-                    icon_color, icon_name = "green", "ok-sign"
-                elif c["vol"] >= 10:
-                    icon_color, icon_name = "darkred", "exclamation-sign"
-                elif c["vol"] >= 5:
-                    icon_color, icon_name = "red", "exclamation-sign"
-                else:
-                    icon_color, icon_name = "blue", "info-sign"
-
-                selo_endereco = "📍 Endereço exato" if c["exato"] else "🏙️ Aproximado (centro da cidade)"
-
-                popup_html = f"""
+        for c in clientes_json:
+            icon_color, icon_name = ("darkred", "exclamation-sign") if c["vol"] >= 10 else \
+                                     (("red", "exclamation-sign") if c["vol"] >= 5 else ("blue", "info-sign"))
+            selo_endereco = "📍 Endereço exato" if c["exato"] else "🏙️ Aproximado (centro da cidade)"
+            popup_html = f"""
 <div style="width:250px;font-family:'Segoe UI',sans-serif;">
   <div style="font-size:13px;font-weight:700;color:#0a1628;margin-bottom:3px;">{c['nome']}</div>
   <div style="font-size:10px;color:#8a95b0;font-family:monospace;margin-bottom:5px;">{c['cnpj']}</div>
-  <span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;margin-bottom:7px;background:{c['status_color']}22;color:{c['status_color']};">{c['status_label']}</span>
+  <span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;margin-bottom:7px;background:#C0392B22;color:#C0392B;">⚠️ Não Cadastrado</span>
   <div style="font-size:11px;color:#4a5568;margin-bottom:2px;">📍 <b>Endereço:</b> {c['endereco']}</div>
   <div style="font-size:11px;color:#4a5568;margin-bottom:2px;">🏙️ <b>Cidade:</b> {c['cidade']}</div>
   <div style="font-size:11px;color:#4a5568;margin-bottom:2px;">🚚 <b>Últ. Modelo:</b> {c['modelo']}</div>
@@ -4188,39 +4198,28 @@ elif pagina == "mapa":
   </div>
   <div style="font-size:10px;color:#8a95b0;text-align:center;">CNPJ para busca: <b>{c['cnpj_norm']}</b></div>
 </div>"""
-                folium.Marker(
-                    location=[c["lat"], c["lon"]],
-                    icon=folium.Icon(color=icon_color, icon=icon_name),
-                    popup=folium.Popup(popup_html, max_width=270),
-                    tooltip=f"{c['nome']} · {c['vol']} empl.",
-                ).add_to(cluster)
+            folium.Marker(
+                location=[c["lat"], c["lon"]],
+                icon=folium.Icon(color=icon_color, icon=icon_name),
+                popup=folium.Popup(popup_html, max_width=270),
+                tooltip=f"{c['nome']} · {c['vol']} empl.",
+            ).add_to(cluster)
 
         st.session_state["_mapa_obj"] = m
         st.session_state["_mapa_sig"] = _mapa_sig
 
-    # Renderizar o mapa
-    map_data = st_folium(m, width="100%", height=560, returned_objects=[], key="folium_mapa")
+    st_folium(m, width="100%", height=560, returned_objects=[], key="folium_mapa")
 
-    # ── Dica de uso do botão "Ver Dados" ──
     st.info(
-        "💡 **Dica:** Clique num marcador para ver o popup. "
-        "Copie o CNPJ exibido e cole na barra de busca acima para ver o histórico completo do cliente. "
-        "Os botões Google Maps e Waze abrem o GPS direto no celular."
-    )
-
-    # ── GPS / Raio: instrução adaptada (GPS nativo não funciona em iframe Folium) ──
-    st.caption(
-        f"📍 Filtro de raio ativo: {raio_km} km · "
-        "Para filtrar por proximidade, use a busca por cidade na barra acima."
+        "💡 **Dica:** Clique num marcador para ver o popup — endereço, último modelo e emplacamentos. "
+        "Os botões Google Maps e Waze abrem a rota direto no celular."
     )
 
     with st.expander(f"📋 Lista completa ({total_geo} clientes no mapa)", expanded=False):
-        cols_show = [c for c in ["NOMEPROPRIETARIO","CPFCNPJPROPRIETARIO","NO_CIDADE","Modelo","volume","em_carteira"] if c in df_plot_geo.columns]
+        cols_show = [c for c in ["NOMEPROPRIETARIO","CPFCNPJPROPRIETARIO","NO_CIDADE","Modelo","volume"] if c in df_plot_geo.columns]
         df_show = df_plot_geo[cols_show].copy()
-        rename_m = {"NOMEPROPRIETARIO":"Cliente","CPFCNPJPROPRIETARIO":"CNPJ","NO_CIDADE":"Cidade","Modelo":"Último Modelo","volume":"Emplacamentos","em_carteira":"Na Carteira"}
+        rename_m = {"NOMEPROPRIETARIO":"Cliente","CPFCNPJPROPRIETARIO":"CNPJ","NO_CIDADE":"Cidade","Modelo":"Último Modelo","volume":"Emplacamentos"}
         df_show.columns = [rename_m.get(c, c) for c in cols_show]
-        if "Na Carteira" in df_show.columns:
-            df_show["Na Carteira"] = df_show["Na Carteira"].apply(lambda x: "✅ Sim" if x else "⚠️ Não")
         st.dataframe(df_show, use_container_width=True, hide_index=True)
         buf_m = BytesIO()
         df_show.to_excel(buf_m, index=False, engine="openpyxl")
