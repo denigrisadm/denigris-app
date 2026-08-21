@@ -3007,11 +3007,87 @@ elif pagina == "gestao":
     perf_e = perf.rename(columns={"Total":"Total","Nigris":"De Nigris","Conc":"Concorrente","Clientes":"Clientes","% Nigris":"% De Nigris"})
     st.dataframe(perf_e, use_container_width=True, hide_index=True)
 
+    cnpjs_cart_all_g = set(df_cart["CNPJ_NORM"].dropna()) if df_cart is not None else set()
+
+    # ── Concessionárias (ranking geral + destaque concorrentes) ──
+    st.markdown('<div class="sec-title">🏢 Emplacamentos por Concessionária</div>', unsafe_allow_html=True)
+    conc_rank = df_g.groupby("Concessionário").agg(
+        Total=("Chassi","count"), Clientes=("CNPJ_NORM","nunique")
+    ).reset_index().sort_values("Total", ascending=False)
+    conc_rank["De Nigris?"] = is_denigris(conc_rank["Concessionário"]).map({True: "✅ Sim", False: "⚠️ Concorrente"})
+    conc_concorrentes = conc_rank[conc_rank["De Nigris?"] == "⚠️ Concorrente"].reset_index(drop=True)
+
+    cc1, cc2 = st.columns(2)
+    with cc1:
+        st.caption(f"Top concessionárias concorrentes no período ({len(conc_concorrentes)} no total)")
+        fig_conc = go.Figure(go.Bar(x=conc_concorrentes.head(10)["Total"], y=conc_concorrentes.head(10)["Concessionário"],
+                                     orientation="h", marker_color="#c0392b"))
+        fig_conc.update_layout(plot_bgcolor="#fff", paper_bgcolor="#fff", font_color="#4a5568", height=320,
+            xaxis=dict(showgrid=True, gridcolor="#f0f2f7"), yaxis=dict(autorange="reversed"),
+            margin=dict(t=10,b=10,l=10,r=10))
+        st.plotly_chart(fig_conc, use_container_width=True)
+    with cc2:
+        st.caption("Ranking completo (todas as concessionárias)")
+        st.dataframe(conc_rank.head(20), use_container_width=True, hide_index=True)
+
+    # ── Volume por Modelo ──
+    st.markdown('<div class="sec-title">🚚 Volume por Modelo</div>', unsafe_allow_html=True)
+    mod_rank = df_g.groupby("Modelo").agg(
+        Total=("Chassi","count"), Nigris=("Concessionário", lambda x: is_denigris(x).sum())
+    ).reset_index().sort_values("Total", ascending=False)
+    mod_rank["Concorrente"] = mod_rank["Total"] - mod_rank["Nigris"]
+    mc1, mc2 = st.columns([1.3, 1])
+    with mc1:
+        fig_mod = go.Figure(go.Bar(x=mod_rank.head(12)["Modelo"], y=mod_rank.head(12)["Total"], marker_color="#0a1628"))
+        fig_mod.update_layout(plot_bgcolor="#fff", paper_bgcolor="#fff", font_color="#4a5568", height=300,
+            xaxis=dict(showgrid=False, tickangle=-30), yaxis=dict(showgrid=True, gridcolor="#f0f2f7"),
+            margin=dict(t=10,b=10,l=10,r=10))
+        st.plotly_chart(fig_mod, use_container_width=True)
+    with mc2:
+        st.dataframe(mod_rank.head(15), use_container_width=True, hide_index=True)
+
+    # ── Maiores clientes sem cadastro na carteira ──
+    st.markdown('<div class="sec-title">🎯 Maiores Clientes Sem Cadastro na Carteira</div>', unsafe_allow_html=True)
+    sem_cart_rank = df_g[~df_g["CNPJ_NORM"].isin(cnpjs_cart_all_g)].groupby("CNPJ_NORM").agg(
+        Nome=("NOMEPROPRIETARIO","last"), Cidade=("NO_CIDADE","last"),
+        **{"Qtd. Chassi": ("Chassi","count")},
+        Concessionaria=("Concessionário", lambda x: get_modes(x, top=1)[0] if get_modes(x, top=1) else "—"),
+    ).reset_index().sort_values("Qtd. Chassi", ascending=False)
+    if sem_cart_rank.empty:
+        st.info("Todo cliente que emplacou no período já está na carteira de alguém.")
+    else:
+        st.caption(f"{len(sem_cart_rank)} cliente(s) emplacaram no período e não pertencem à carteira de nenhum vendedor — oportunidade pura.")
+        st.dataframe(sem_cart_rank.drop(columns=["CNPJ_NORM"]).head(20), use_container_width=True, hide_index=True)
+
+    # ── Vendas perdidas: cliente é carteira de um vendedor, mas comprou de concorrente no período ──
+    perdidas_g = df_g[df_g["CNPJ_NORM"].isin(cnpjs_cart_all_g) & (~is_denigris(df_g["Concessionário"]))].copy()
+    st.markdown('<div class="sec-title">🚨 Vendas Perdidas — Cliente da Carteira Comprou da Concorrência</div>', unsafe_allow_html=True)
+    if perdidas_g.empty:
+        st.success("✅ Nenhum cliente da carteira comprou de concorrente neste período.")
+    else:
+        st.markdown(f'<div class="alert-red">🚨 <strong>{len(perdidas_g)} venda(s) perdida(s)</strong> — clientes que já eram carteira de algum vendedor e emplacaram na concorrência neste período.</div>', unsafe_allow_html=True)
+        perdidas_por_vend = perdidas_g.groupby("Consultor").agg(
+            **{"Vendas Perdidas": ("Chassi","count")}, Clientes=("CNPJ_NORM","nunique")
+        ).reset_index().sort_values("Vendas Perdidas", ascending=False)
+        pv1, pv2 = st.columns([1, 1.4])
+        with pv1:
+            st.dataframe(perdidas_por_vend, use_container_width=True, hide_index=True)
+        with pv2:
+            alerta_g = perdidas_g.groupby("CNPJ_NORM").agg(
+                Nome=("NOMEPROPRIETARIO","last"), Cidade=("NO_CIDADE","last"), Consultor=("Consultor","last"),
+                Concessionaria=("Concessionário","last"), Modelo=("Modelo","last"),
+                Data=("Data emplacamento","max"),
+            ).reset_index().sort_values("Data", ascending=False)
+            alerta_g_show = alerta_g.drop(columns=["CNPJ_NORM"]).copy()
+            alerta_g_show["Data"] = pd.to_datetime(alerta_g_show["Data"]).dt.strftime("%d/%m/%Y")
+            st.dataframe(alerta_g_show, use_container_width=True, hide_index=True)
+        buf_perd = BytesIO(); alerta_g_show.to_excel(buf_perd, index=False, engine="openpyxl"); buf_perd.seek(0)
+        st.download_button("📥 Exportar vendas perdidas (xlsx)", buf_perd, file_name="vendas_perdidas.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="dl_perdidas_g")
+
     # ── Clientes que emplacaram no período — o "quem é quem" pedido ──
     st.markdown('<div class="sec-title">🧾 Clientes que Emplacaram no Período</div>', unsafe_allow_html=True)
     busca_cli_g = st.text_input("", placeholder="🔍 Buscar cliente por nome...", label_visibility="collapsed", key="gestao_busca_cliente")
-
-    cnpjs_cart_all_g = set(df_cart["CNPJ_NORM"].dropna()) if df_cart is not None else set()
 
     cli_g = df_g.groupby("CNPJ_NORM").agg(
         Nome=("NOMEPROPRIETARIO", "last"),
@@ -3062,6 +3138,35 @@ elif pagina == "gestao":
     buf2=BytesIO(); perf_e.to_excel(buf2,index=False,engine="openpyxl"); buf2.seek(0)
     st.download_button("👥 Exportar desempenho por consultor (xlsx)", buf2, file_name="consultores.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    # ── Dashboard Gerencial — um único xlsx com tudo, pronto pra enviar à gerência ──
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="sec-title">📊 Dashboard Gerencial</div>', unsafe_allow_html=True)
+    st.caption("Um único arquivo com resumo, consultores, concessionárias, modelos, oportunidades e vendas perdidas do período filtrado acima.")
+
+    resumo_dash = pd.DataFrame({
+        "Indicador": ["Período", "Ano(s)", "Emplacamentos Totais", "Clientes Únicos", "De Nigris", "Concorrente",
+                      "Market Share", "Vendas Perdidas (carteira → concorrência)", "Clientes Sem Carteira no Período"],
+        "Valor": [periodo_lbl, ", ".join(str(a) for a in anos_s_g) if anos_s_g else "—", total_g,
+                 df_g["CNPJ_NORM"].nunique(), nigris_g, conc_g, f"{ms_g}%",
+                 len(perdidas_g), len(sem_cart_rank)],
+    })
+    buf_dash = BytesIO()
+    with pd.ExcelWriter(buf_dash, engine="openpyxl") as _writer_dash:
+        resumo_dash.to_excel(_writer_dash, sheet_name="Resumo", index=False)
+        perf_e.to_excel(_writer_dash, sheet_name="Por Consultor", index=False)
+        conc_rank.to_excel(_writer_dash, sheet_name="Concessionarias", index=False)
+        mod_rank.to_excel(_writer_dash, sheet_name="Modelos", index=False)
+        sem_cart_rank.drop(columns=["CNPJ_NORM"], errors="ignore").to_excel(_writer_dash, sheet_name="Sem Carteira", index=False)
+        if not perdidas_g.empty:
+            perdidas_por_vend.to_excel(_writer_dash, sheet_name="Vendas Perdidas", index=False)
+            alerta_g_show.to_excel(_writer_dash, sheet_name="Alerta Concorrencia", index=False)
+        cli_g_show.to_excel(_writer_dash, sheet_name="Clientes do Periodo", index=False)
+    buf_dash.seek(0)
+    nome_dash = f"dashboard_gerencial_{'-'.join(str(a) for a in anos_s_g) if anos_s_g else 'geral'}.xlsx"
+    st.download_button("📊 Gerar Dashboard Gerencial (xlsx completo)", buf_dash, file_name=nome_dash,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True, key="dl_dashboard_gerencial")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PÁGINA: OPORTUNIDADES
