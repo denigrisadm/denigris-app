@@ -47,6 +47,7 @@ AREA_FILE     = os.path.join(DATA_DIR, "AREA_OPERACIONAL.xlsx")
 CARTEIRA_FILE = os.path.join(DATA_DIR, "CARTEIRA.xlsx")
 EMP_FILE      = os.path.join(DATA_DIR, "EMPLACAMENTOS.xlsx")  # base completa 2021-
 USERS_FILE    = os.path.join(DATA_DIR, "users.json")
+CONFIG_FILE   = os.path.join(DATA_DIR, "config.json")
 
 # ── IDENTIDADE ──
 NOMES_DENIGRIS = ["COMERCIAL DE VEICULOS DE NIGRIS LTDA"]
@@ -701,6 +702,183 @@ def save_users(users):
         pass
     return gh_ok, gh_err
 
+def load_config():
+    """Carrega configurações gerais do app (ex: chave da API Gemini). Mesmo padrão do load_users."""
+    token, repo, branch = _gh_secrets()
+    if token and repo:
+        api_url = f"https://api.github.com/repos/{repo}/contents/data/config.json"
+        content, _err = _gh_get_file(api_url, token)
+        if content:
+            try:
+                cfg = json.loads(content.decode("utf-8"))
+                os.makedirs(DATA_DIR, exist_ok=True)
+                with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                    f.write(json.dumps(cfg, ensure_ascii=False, indent=2))
+                return cfg
+            except Exception:
+                pass
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_config(cfg):
+    """Salva configurações gerais: 1º GitHub (persistente), 2º arquivo local (cache)."""
+    os.makedirs(DATA_DIR, exist_ok=True)
+    content_str = json.dumps(cfg, ensure_ascii=False, indent=2)
+    content_bytes = content_str.encode("utf-8")
+    gh_ok, gh_err = False, "GitHub não configurado"
+    token, repo, branch = _gh_secrets()
+    if token and repo:
+        try:
+            api_url = f"https://api.github.com/repos/{repo}/contents/data/config.json"
+            _, sha_or_err = _gh_get_file(api_url, token)
+            sha = sha_or_err if (sha_or_err and not str(sha_or_err).startswith("HTTP")) else ""
+            resultado = _gh_put_file(api_url, token, branch, content_bytes, sha, message="update config.json")
+            if isinstance(resultado, tuple): gh_ok, gh_err = resultado
+            else: gh_ok = bool(resultado); gh_err = "" if gh_ok else "Falha no envio"
+        except Exception as e:
+            gh_ok, gh_err = False, str(e)
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            f.write(content_str)
+    except Exception:
+        pass
+    return gh_ok, gh_err
+
+# ════════════════════════════════════════════════════════════════
+# GEMINI — assistente de IA (insights, dúvidas, análises)
+# ════════════════════════════════════════════════════════════════
+def gemini_api_key():
+    cfg = st.session_state.get("app_config") or {}
+    return cfg.get("gemini_api_key", "")
+
+def gemini_modelo():
+    cfg = st.session_state.get("app_config") or {}
+    return cfg.get("gemini_modelo", "gemini-2.5-flash")
+
+def chamar_gemini(prompt, historico=None, temperature=0.4):
+    """Chama a API do Gemini (generateContent). Retorna (texto_resposta, erro)."""
+    import urllib.request, urllib.error
+    api_key = gemini_api_key()
+    if not api_key:
+        return None, "Chave da API Gemini não configurada. Peça ao gestor para cadastrar em Admin → Configurações."
+    modelo = gemini_modelo()
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={api_key}"
+
+    contents = []
+    for turno in (historico or [])[-8:]:
+        role = "user" if turno["role"] == "user" else "model"
+        contents.append({"role": role, "parts": [{"text": turno["content"]}]})
+    contents.append({"role": "user", "parts": [{"text": prompt}]})
+
+    payload = json.dumps({
+        "contents": contents,
+        "generationConfig": {"temperature": temperature, "maxOutputTokens": 2048},
+    }).encode("utf-8")
+
+    try:
+        req = urllib.request.Request(url, data=payload, method="POST",
+                                      headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        texto = data["candidates"][0]["content"]["parts"][0]["text"]
+        return texto, None
+    except urllib.error.HTTPError as e:
+        try:
+            corpo = json.loads(e.read().decode("utf-8"))
+            msg_erro = corpo.get("error", {}).get("message", str(e))
+        except Exception:
+            msg_erro = str(e)
+        return None, f"Erro da API Gemini ({e.code}): {msg_erro}"
+    except Exception as e:
+        return None, f"Falha ao chamar a IA: {e}"
+
+def montar_resumo_executivo_ia(df_emp, df_cart, df_area):
+    """Resumo compacto da base inteira — o 'contexto' que a IA recebe em toda pergunta.
+    Não manda a base crua (seria caro e estouraria contexto); manda só os números que importam."""
+    if df_emp is None:
+        return "Nenhum dado de emplacamento carregado ainda."
+
+    partes = []
+    hoje = pd.Timestamp.now()
+    ult_12m = df_emp[df_emp["Data emplacamento"] >= (hoje - pd.DateOffset(months=12))]
+    base_ref = ult_12m if not ult_12m.empty else df_emp
+
+    total = len(base_ref)
+    nigris = int(is_denigris(base_ref["Concessionário"]).sum())
+    ms = round(nigris/total*100, 1) if total else 0
+    partes.append(f"Período de referência: últimos 12 meses ({base_ref['Data emplacamento'].min():%m/%Y} a {base_ref['Data emplacamento'].max():%m/%Y}).")
+    partes.append(f"Total de emplacamentos no período: {total}. De Nigris: {nigris} ({ms}% market share). Concorrência: {total-nigris}.")
+
+    top_conc = base_ref[~is_denigris(base_ref["Concessionário"])].groupby("Concessionário").size().sort_values(ascending=False).head(5)
+    if not top_conc.empty:
+        partes.append("Top 5 concorrentes por volume: " + "; ".join(f"{k} ({v})" for k, v in top_conc.items()))
+
+    top_modelos = base_ref.groupby("Modelo").size().sort_values(ascending=False).head(5)
+    if not top_modelos.empty:
+        partes.append("Top 5 modelos mais emplacados: " + "; ".join(f"{k} ({v})" for k, v in top_modelos.items()))
+
+    top_clientes = base_ref.groupby("NOMEPROPRIETARIO").size().sort_values(ascending=False).head(8)
+    if not top_clientes.empty:
+        partes.append("Maiores clientes por volume no período: " + "; ".join(f"{k} ({v})" for k, v in top_clientes.items()))
+
+    if df_cart is not None:
+        partes.append(f"Tamanho total da carteira De Nigris: {len(df_cart)} clientes cadastrados.")
+        if "VENDEDOR" in df_cart.columns:
+            por_vend = df_cart["VENDEDOR"].astype(str).str.strip().value_counts().head(15)
+            partes.append("Carteira por vendedor: " + "; ".join(f"{k} ({v})" for k, v in por_vend.items()))
+
+    if df_area is not None:
+        n_munic = df_area[df_area["Consultor"] != "ZONA LIVRE"]["Municipio"].nunique() if "Municipio" in df_area.columns else None
+        if n_munic:
+            partes.append(f"Área operacional cobre {n_munic} município(s)/região(ões) distintas.")
+
+    return "\n".join(partes)
+
+def buscar_cliente_contexto_ia(pergunta, df_emp, df_cart):
+    """Se a pergunta menciona um CNPJ ou um nome que bate com algum cliente, monta um contexto
+    detalhado só daquele cliente (histórico completo, sócio, cidade) pra IA responder com precisão."""
+    if df_emp is None:
+        return ""
+    cnpj_q = re.sub(r"\D", "", pergunta)
+    alvo = None
+    if len(cnpj_q) >= 11:
+        alvo = df_emp[df_emp["CNPJ_NORM"].astype(str).str.startswith(cnpj_q[:11])]
+    else:
+        q_norm = norm_str(pergunta)
+        palavras = [p for p in q_norm.split() if len(p) >= 4]
+        if palavras:
+            mask = pd.Series(True, index=df_emp.index)
+            nomes_norm = norm_str_series(df_emp["NOMEPROPRIETARIO"])
+            for p in palavras:
+                mask &= nomes_norm.str.contains(p, na=False, regex=False)
+            candidatos = df_emp[mask]
+            if not candidatos.empty:
+                alvo = candidatos
+
+    if alvo is None or alvo.empty:
+        return ""
+
+    cnpj_alvo = alvo.iloc[0]["CNPJ_NORM"]
+    hist = df_emp[df_emp["CNPJ_NORM"] == cnpj_alvo].sort_values("Data emplacamento", ascending=False)
+    if hist.empty:
+        return ""
+    last = hist.iloc[0]
+    linhas_hist = "; ".join(
+        f"{pd.Timestamp(r['Data emplacamento']):%m/%Y} {safe_str(r.get('Modelo',''),'?')} @ {safe_str(r.get('Concessionário',''),'?')}"
+        for _, r in hist.head(15).iterrows()
+    )
+    na_carteira = df_cart is not None and cnpj_alvo in set(df_cart["CNPJ_NORM"].dropna())
+    ctx = (f"\nCONTEXTO ESPECÍFICO DO CLIENTE MENCIONADO:\n"
+           f"Nome: {last.get('NOMEPROPRIETARIO','—')} | CNPJ: {last.get('CPFCNPJPROPRIETARIO','—')} | "
+           f"Cidade: {last.get('NO_CIDADE','—')} | Na carteira De Nigris: {'Sim' if na_carteira else 'Não'}\n"
+           f"Total de compras históricas: {len(hist)}. Histórico (mais recentes primeiro): {linhas_hist}")
+    return ctx
+
 def registrar_acesso(login):
     users = st.session_state.get("users_db", load_users())
     if login in users:
@@ -1262,13 +1440,18 @@ def gerar_relatorio_emplacamento(emp_mes, emp_area, cnpjs_carteira_set, todos_cn
 # ════════════════════════════════════════════════════════════════
 for k, v in [("user",None),("df_area",None),("df_cart",None),
              ("df_emp_list",[]),("emp_fontes",[]),("pagina","busca"),
-             ("users_db",None),("dados_carregados",False)]:
+             ("users_db",None),("dados_carregados",False),("app_config",None),
+             ("chat_ia_historico",[])]:
     if k not in st.session_state:
         st.session_state[k] = v
 
 # Usuários: carrega só o JSON pequeno — rápido
 if st.session_state.users_db is None:
     st.session_state.users_db = load_users()
+
+# Configurações gerais (ex: chave da API Gemini) — carrega junto, é leve
+if st.session_state.app_config is None:
+    st.session_state.app_config = load_config()
 
 USERS = st.session_state.users_db
 
