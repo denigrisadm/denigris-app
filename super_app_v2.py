@@ -879,7 +879,58 @@ def buscar_cliente_contexto_ia(pergunta, df_emp, df_cart):
            f"Total de compras históricas: {len(hist)}. Histórico (mais recentes primeiro): {linhas_hist}")
     return ctx
 
-def registrar_acesso(login):
+def buscar_cidade_contexto_ia(pergunta, df_emp, df_cart):
+    """Se a pergunta menciona uma cidade que existe na base (NO_CIDADE), monta um contexto
+    detalhado SÓ daquela cidade: quem comprou, quanto, de quem, quem já é cliente De Nigris
+    e quem ainda é oportunidade — pra IA responder com dado real, não recomendação genérica."""
+    if df_emp is None or "NO_CIDADE_NORM" not in df_emp.columns:
+        return ""
+    q_norm = norm_str(pergunta)
+    cidades_unicas = df_emp["NO_CIDADE"].dropna().unique()
+    cidades_norm = {norm_str(c): c for c in cidades_unicas if str(c).strip()}
+    cidade_encontrada = None
+    # match por nome completo da cidade dentro da pergunta (evita falso-positivo de cidade curta tipo "Sao Paulo" vs "Sao Paulo do X")
+    for c_norm, c_original in sorted(cidades_norm.items(), key=lambda x: -len(x[0])):
+        if c_norm and c_norm in q_norm:
+            cidade_encontrada = c_original
+            break
+    if not cidade_encontrada:
+        return ""
+
+    sub = df_emp[df_emp["NO_CIDADE"] == cidade_encontrada].copy()
+    if sub.empty:
+        return ""
+
+    hoje = pd.Timestamp.now()
+    ult_12m = sub[sub["Data emplacamento"] >= (hoje - pd.DateOffset(months=12))]
+    base = ult_12m if not ult_12m.empty else sub
+
+    total = len(base)
+    nigris = int(is_denigris(base["Concessionário"]).sum())
+    ms = round(nigris/total*100, 1) if total else 0
+
+    top_modelos = base.groupby("Modelo").size().sort_values(ascending=False).head(5)
+    top_conc = base[~is_denigris(base["Concessionário"])].groupby("Concessionário").size().sort_values(ascending=False).head(5)
+
+    cnpjs_cart = set(df_cart["CNPJ_NORM"].dropna()) if df_cart is not None and "CNPJ_NORM" in df_cart.columns else set()
+    por_cliente = base.groupby(["CNPJ_NORM", "NOMEPROPRIETARIO"]).size().sort_values(ascending=False).head(15)
+    linhas_clientes = []
+    for (cnpj_c, nome_c), qtd in por_cliente.items():
+        status = "já é carteira De Nigris" if cnpj_c in cnpjs_cart else "AINDA NÃO cadastrado — oportunidade"
+        linhas_clientes.append(f"{nome_c} ({qtd} emplacamento(s), {status})")
+
+    ctx = (
+        f"\nCONTEXTO ESPECÍFICO DA CIDADE MENCIONADA ({cidade_encontrada}):\n"
+        f"Total de emplacamentos na cidade no período: {total}. De Nigris: {nigris} ({ms}% market share local). "
+        f"Concorrência: {total-nigris}.\n"
+        f"Top modelos emplacados na cidade: " + "; ".join(f"{k} ({v})" for k, v in top_modelos.items()) + ".\n"
+        + (f"Top concorrentes na cidade: " + "; ".join(f"{k} ({v})" for k, v in top_conc.items()) + ".\n" if not top_conc.empty else "")
+        + "Maiores clientes da cidade no período (nome, volume, se já é ou não carteira De Nigris):\n"
+        + "\n".join(f"- {l}" for l in linhas_clientes)
+    )
+    return ctx
+
+
     users = st.session_state.get("users_db", load_users())
     if login in users:
         try:
@@ -4300,14 +4351,24 @@ elif pagina == "assistente_ia":
 
         resumo_ctx = montar_resumo_executivo_ia(df_emp, df_cart, df_area)
         cliente_ctx = buscar_cliente_contexto_ia(pergunta_ia, df_emp, df_cart)
+        cidade_ctx = buscar_cidade_contexto_ia(pergunta_ia, df_emp, df_cart)
         escopo = ""
         if perfil == "vendedor":
             escopo = f"\nO usuário é o vendedor {nome}, atendendo a área/carteira dele — priorize essa perspectiva quando fizer sentido."
 
-        prompt_final = f"""Você é um analista comercial sênior da Comercial De Nigris, concessionária Mercedes-Benz de veículos comerciais (caminhões e vans) em São Paulo. Responda de forma direta, estratégica e acionável, em português do Brasil. Use os dados abaixo como base — não invente números que não estão aqui; se não souber, diga que não tem esse dado na base carregada.
+        prompt_final = f"""Você é o parceiro de confiança do time comercial da Comercial De Nigris (concessionária Mercedes-Benz de caminhões e vans em São Paulo) — pense em si mesmo como um colega experiente de mercado que o vendedor chama pra trocar uma ideia rápida, não como quem escreve um relatório formal.
 
-RESUMO EXECUTIVO DA BASE:
+COMO RESPONDER:
+- Converse normalmente, como numa mensagem de WhatsApp ou um bate-papo — frases corridas, sem títulos numerados tipo "1. Diagnóstico", sem sub-bullets em cascata (A., B., C.).
+- Pode usar 1-2 bullets soltos se ajudar a listar nomes/números, mas o grosso da resposta é texto corrido, direto ao ponto.
+- Vá direto pra resposta que a pessoa pediu. Nada de "Diagnóstico da Base de Dados" ou "Contexto Estratégico" como cabeçalho — só responda.
+- Use os dados abaixo como base real — nunca invente número que não está aqui. Se a pergunta pede algo bem específico (endereço exato, telefone, etc.) que não está nos dados fornecidos, diga isso rapidinho e já sugira o que der pra fazer com o que você TEM (que geralmente é bastante).
+- Sempre que a pergunta mencionar uma cidade ou um cliente específico, você vai encontrar logo abaixo um bloco de CONTEXTO ESPECÍFICO já filtrado pra isso — use esses dados primeiro, é a resposta mais precisa que você tem.
+- Termine com uma sugestão prática e curta de próximo passo, não uma lista longa de "plano de ação".
+
+RESUMO EXECUTIVO DA BASE (últimos 12 meses):
 {resumo_ctx}
+{cidade_ctx}
 {cliente_ctx}
 {escopo}
 
