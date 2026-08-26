@@ -797,34 +797,62 @@ def chamar_gemini(prompt, historico=None, temperature=0.4):
     except Exception as e:
         return None, f"Falha ao chamar a IA: {e}"
 
+MESES_NOMES_NORM = {
+    "JANEIRO":1,"FEVEREIRO":2,"MARCO":3,"ABRIL":4,"MAIO":5,"JUNHO":6,
+    "JULHO":7,"AGOSTO":8,"SETEMBRO":9,"OUTUBRO":10,"NOVEMBRO":11,"DEZEMBRO":12,
+}
+
+@st.cache_data(show_spinner=False)
 def montar_resumo_executivo_ia(df_emp, df_cart, df_area):
-    """Resumo compacto da base inteira — o 'contexto' que a IA recebe em toda pergunta.
-    Não manda a base crua (seria caro e estouraria contexto); manda só os números que importam."""
+    """Resumo compacto da base INTEIRA (todo o histórico, não só 12 meses) — o 'contexto'
+    que a IA recebe em toda pergunta. Traz visão ano a ano pra permitir comparação
+    de sazonalidade/evolução, além do panorama consolidado."""
     if df_emp is None:
         return "Nenhum dado de emplacamento carregado ainda."
 
     partes = []
+    datas_validas = df_emp["Data emplacamento"].dropna()
+    if datas_validas.empty:
+        return "Base de emplacamentos carregada, mas sem datas válidas."
+
+    ano_min, ano_max = int(datas_validas.dt.year.min()), int(datas_validas.dt.year.max())
+    partes.append(f"BASE HISTÓRICA COMPLETA: de {datas_validas.min():%m/%Y} até {datas_validas.max():%m/%Y} — cobre os anos de {ano_min} a {ano_max}.")
+
+    total_geral = len(df_emp)
+    nigris_geral = int(is_denigris(df_emp["Concessionário"]).sum())
+    ms_geral = round(nigris_geral/total_geral*100, 1) if total_geral else 0
+    partes.append(f"TOTAL GERAL (todo o histórico): {total_geral} emplacamentos no mercado mapeado. De Nigris: {nigris_geral} ({ms_geral}% market share histórico).")
+
+    # Ano a ano — permite a IA comparar sazonalidade e evolução sem precisar de outro filtro
+    df_emp["_ano_ref"] = df_emp["Data emplacamento"].dt.year
+    por_ano = df_emp.groupby("_ano_ref").apply(
+        lambda g: (len(g), int(is_denigris(g["Concessionário"]).sum())), include_groups=False
+    )
+    linhas_ano = []
+    for ano, (tot, ng) in sorted(por_ano.items()):
+        ms_a = round(ng/tot*100, 1) if tot else 0
+        linhas_ano.append(f"{int(ano)}: {tot} emplacamentos totais, {ng} De Nigris ({ms_a}% share)")
+    partes.append("EVOLUÇÃO ANO A ANO (use isso pra qualquer comparação de sazonalidade ou crescimento):\n" + "\n".join(linhas_ano))
+
+    # Últimos 12 meses (visão recente, além do histórico)
     hoje = pd.Timestamp.now()
     ult_12m = df_emp[df_emp["Data emplacamento"] >= (hoje - pd.DateOffset(months=12))]
-    base_ref = ult_12m if not ult_12m.empty else df_emp
+    if not ult_12m.empty:
+        t12 = len(ult_12m); n12 = int(is_denigris(ult_12m["Concessionário"]).sum())
+        ms12 = round(n12/t12*100, 1) if t12 else 0
+        partes.append(f"ÚLTIMOS 12 MESES ({ult_12m['Data emplacamento'].min():%m/%Y} a {ult_12m['Data emplacamento'].max():%m/%Y}): {t12} emplacamentos, {n12} De Nigris ({ms12}% share).")
 
-    total = len(base_ref)
-    nigris = int(is_denigris(base_ref["Concessionário"]).sum())
-    ms = round(nigris/total*100, 1) if total else 0
-    partes.append(f"Período de referência: últimos 12 meses ({base_ref['Data emplacamento'].min():%m/%Y} a {base_ref['Data emplacamento'].max():%m/%Y}).")
-    partes.append(f"Total de emplacamentos no período: {total}. De Nigris: {nigris} ({ms}% market share). Concorrência: {total-nigris}.")
+        top_conc = ult_12m[~is_denigris(ult_12m["Concessionário"])].groupby("Concessionário").size().sort_values(ascending=False).head(5)
+        if not top_conc.empty:
+            partes.append("Top 5 concorrentes (últimos 12 meses): " + "; ".join(f"{k} ({v})" for k, v in top_conc.items()))
 
-    top_conc = base_ref[~is_denigris(base_ref["Concessionário"])].groupby("Concessionário").size().sort_values(ascending=False).head(5)
-    if not top_conc.empty:
-        partes.append("Top 5 concorrentes por volume: " + "; ".join(f"{k} ({v})" for k, v in top_conc.items()))
+        top_modelos = ult_12m.groupby("Modelo").size().sort_values(ascending=False).head(5)
+        if not top_modelos.empty:
+            partes.append("Top 5 modelos mais emplacados (últimos 12 meses): " + "; ".join(f"{k} ({v})" for k, v in top_modelos.items()))
 
-    top_modelos = base_ref.groupby("Modelo").size().sort_values(ascending=False).head(5)
-    if not top_modelos.empty:
-        partes.append("Top 5 modelos mais emplacados: " + "; ".join(f"{k} ({v})" for k, v in top_modelos.items()))
-
-    top_clientes = base_ref.groupby("NOMEPROPRIETARIO").size().sort_values(ascending=False).head(8)
-    if not top_clientes.empty:
-        partes.append("Maiores clientes por volume no período: " + "; ".join(f"{k} ({v})" for k, v in top_clientes.items()))
+        top_clientes = ult_12m.groupby("NOMEPROPRIETARIO").size().sort_values(ascending=False).head(8)
+        if not top_clientes.empty:
+            partes.append("Maiores clientes por volume (últimos 12 meses): " + "; ".join(f"{k} ({v})" for k, v in top_clientes.items()))
 
     if df_cart is not None:
         partes.append(f"Tamanho total da carteira De Nigris: {len(df_cart)} clientes cadastrados.")
@@ -837,11 +865,66 @@ def montar_resumo_executivo_ia(df_emp, df_cart, df_area):
         if n_munic:
             partes.append(f"Área operacional cobre {n_munic} município(s)/região(ões) distintas.")
 
-    return "\n".join(partes)
+    return "\n\n".join(partes)
 
-def buscar_cliente_contexto_ia(pergunta, df_emp, df_cart):
+def buscar_periodo_contexto_ia(pergunta, df_emp):
+    """Se a pergunta menciona um mês (ex: 'agosto') e/ou um ano específico, monta o
+    detalhamento daquele recorte comparando entre os anos disponíveis na base —
+    essencial pra perguntas de sazonalidade tipo 'como foi agosto nos últimos anos'."""
+    if df_emp is None:
+        return ""
+    q_norm = norm_str(pergunta)
+    mes_encontrado = None
+    for nome_mes, num_mes in MESES_NOMES_NORM.items():
+        if nome_mes in q_norm:
+            mes_encontrado = num_mes
+            break
+    anos_citados = [int(a) for a in re.findall(r"\b(20\d{2})\b", pergunta)]
+    if mes_encontrado is None and not anos_citados:
+        return ""
+
+    df = df_emp.copy()
+    df["_ano_ref"] = df["Data emplacamento"].dt.year
+    df["_mes_ref"] = df["Data emplacamento"].dt.month
+    if mes_encontrado:
+        df = df[df["_mes_ref"] == mes_encontrado]
+    if anos_citados:
+        df = df[df["_ano_ref"].isin(anos_citados)]
+    if df.empty:
+        return ""
+
+    linhas = []
+    for ano, g in df.groupby("_ano_ref"):
+        tot = len(g); ng = int(is_denigris(g["Concessionário"]).sum())
+        ms = round(ng/tot*100, 1) if tot else 0
+        top_mod = g.groupby("Modelo").size().sort_values(ascending=False).head(3)
+        linhas.append(f"{int(ano)}: {tot} emplacamentos, {ng} De Nigris ({ms}% share). Modelos mais vendidos: " +
+                      "; ".join(f"{k} ({v})" for k, v in top_mod.items()))
+
+    label_mes = [k for k, v in MESES_NOMES_NORM.items() if v == mes_encontrado][0].title() if mes_encontrado else "todo o ano"
+    ctx = f"\nCONTEXTO ESPECÍFICO DO PERÍODO MENCIONADO ({label_mes}{' de ' + '/'.join(map(str, anos_citados)) if anos_citados else ', comparando todos os anos disponíveis'}):\n" + "\n".join(linhas)
+    return ctx
+
+def consultar_cnpj_receita_federal(cnpj):
+    """Consulta a Receita Federal via BrasilAPI (gratuita, sem chave) quando o cliente
+    não está na base carregada. Retorna (dados_dict, erro)."""
+    import urllib.request, urllib.error
+    cnpj_limpo = re.sub(r"\D", "", str(cnpj))
+    if len(cnpj_limpo) != 14:
+        return None, "CNPJ inválido para consulta (precisa ter 14 dígitos)."
+    try:
+        req = urllib.request.Request(f"https://brasilapi.com.br/api/cnpj/v1/{cnpj_limpo}",
+                                      headers={"User-Agent": "De Nigris BI"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read().decode("utf-8")), None
+    except Exception as e:
+        return None, f"Não consegui consultar a Receita Federal agora ({e})."
+
+def buscar_cliente_contexto_ia(pergunta, df_emp, df_cart, df_area):
     """Se a pergunta menciona um CNPJ ou um nome que bate com algum cliente, monta um contexto
-    detalhado só daquele cliente (histórico completo, sócio, cidade) pra IA responder com precisão."""
+    RICO daquele cliente — igual ao que aparece na página Busca de Cliente: histórico completo
+    desde o início da base, endereço, sócios/decisores, vendedor responsável, volume por ano,
+    projeção de próxima compra e marca preferida. Se não achar na base, tenta a Receita Federal."""
     if df_emp is None:
         return ""
     cnpj_q = re.sub(r"\D", "", pergunta)
@@ -861,6 +944,20 @@ def buscar_cliente_contexto_ia(pergunta, df_emp, df_cart):
                 alvo = candidatos
 
     if alvo is None or alvo.empty:
+        # Não achou na base local — se tem CNPJ completo na pergunta, tenta Receita Federal
+        if len(cnpj_q) == 14:
+            dados_rf, erro_rf = consultar_cnpj_receita_federal(cnpj_q)
+            if dados_rf:
+                return (f"\nCONTEXTO ESPECÍFICO DO CLIENTE (não estava na base De Nigris — consultado na Receita Federal agora):\n"
+                        f"Razão social: {dados_rf.get('razao_social','—')} | Nome fantasia: {dados_rf.get('nome_fantasia','—')}\n"
+                        f"Situação cadastral: {dados_rf.get('descricao_situacao_cadastral','—')} | "
+                        f"Atividade principal: {dados_rf.get('cnae_fiscal_descricao','—')}\n"
+                        f"Endereço: {dados_rf.get('descricao_tipo_de_logradouro','')} {dados_rf.get('logradouro','')}, "
+                        f"{dados_rf.get('numero','')} - {dados_rf.get('bairro','')}, {dados_rf.get('municipio','')}/{dados_rf.get('uf','')}\n"
+                        f"Este CNPJ NÃO tem histórico de compra de caminhão/van registrado na nossa base de emplacamentos — "
+                        f"ou seja, é uma empresa fora do radar ainda, possível prospecção nova.")
+            elif erro_rf:
+                return f"\n(Tentei consultar a Receita Federal pro CNPJ {cnpj_q} mas não consegui: {erro_rf})"
         return ""
 
     cnpj_alvo = alvo.iloc[0]["CNPJ_NORM"]
@@ -868,15 +965,69 @@ def buscar_cliente_contexto_ia(pergunta, df_emp, df_cart):
     if hist.empty:
         return ""
     last = hist.iloc[0]
+
+    # Histórico completo — até 40 linhas pra não estourar contexto, mas cobrindo toda a base
     linhas_hist = "; ".join(
         f"{pd.Timestamp(r['Data emplacamento']):%m/%Y} {safe_str(r.get('Modelo',''),'?')} @ {safe_str(r.get('Concessionário',''),'?')}"
-        for _, r in hist.head(15).iterrows()
+        for _, r in hist.head(40).iterrows()
     )
-    na_carteira = df_cart is not None and cnpj_alvo in set(df_cart["CNPJ_NORM"].dropna())
-    ctx = (f"\nCONTEXTO ESPECÍFICO DO CLIENTE MENCIONADO:\n"
-           f"Nome: {last.get('NOMEPROPRIETARIO','—')} | CNPJ: {last.get('CPFCNPJPROPRIETARIO','—')} | "
-           f"Cidade: {last.get('NO_CIDADE','—')} | Na carteira De Nigris: {'Sim' if na_carteira else 'Não'}\n"
-           f"Total de compras históricas: {len(hist)}. Histórico (mais recentes primeiro): {linhas_hist}")
+
+    # Volume por ano
+    hist_c = hist.copy()
+    hist_c["_ano_ref"] = hist_c["Data emplacamento"].dt.year
+    vol_ano = hist_c.groupby("_ano_ref").size().sort_index()
+    vol_ano_str = "; ".join(f"{int(a)}: {v}" for a, v in vol_ano.items())
+
+    # Marca/modelo preferido
+    modelos_pref = hist["Modelo"].value_counts().head(3)
+    modelo_str = "; ".join(f"{k} ({v}x)" for k, v in modelos_pref.items())
+
+    # Projeção de próxima compra
+    datas_hist = hist["Data emplacamento"].dropna().tolist()
+    pred_label, _ = calc_prediction(datas_hist)
+
+    # Endereço completo
+    endereco = montar_endereco_completo(last.to_dict()) if hasattr(last, "to_dict") else "—"
+
+    # Sócios/decisores (colunas NOME_SOCIO_DIRETORi / CARGOi)
+    socios = []
+    for i in range(1, 4):
+        nome_s = safe_str(last.get(f"NOME_SOCIO_DIRETOR{i}", ""), "")
+        cargo_s = safe_str(last.get(f"CARGO{i}", ""), "")
+        if nome_s and nome_s != "—":
+            socios.append(f"{nome_s}" + (f" ({cargo_s})" if cargo_s and cargo_s != "—" else ""))
+    socios_str = "; ".join(socios) if socios else "não consta na base"
+
+    # Carteira / vendedor responsável
+    na_carteira = False
+    vendedor_resp = None
+    classificacao = None
+    if df_cart is not None:
+        cr = df_cart[df_cart["CNPJ_NORM"] == cnpj_alvo]
+        if not cr.empty:
+            na_carteira = True
+            vendedor_resp = safe_str(cr.iloc[0].get("VENDEDOR", ""))
+            classificacao = safe_str(cr.iloc[0].get("Classificação Mercedes", ""))
+    if not vendedor_resp and df_area is not None:
+        cep_c = norm_cep(last.get("NU_CEP", ""))
+        cid_c = norm_str(str(last.get("NO_CIDADE", "")))
+        bai_c = norm_str(str(last.get("NO_BAIRRO", "")))
+        vendedor_resp = get_consultor(cep_c, cid_c, bai_c, df_area)
+
+    ctx = (
+        f"\nCONTEXTO ESPECÍFICO DO CLIENTE MENCIONADO (dados reais da base De Nigris):\n"
+        f"Nome: {last.get('NOMEPROPRIETARIO','—')} | Nome fantasia: {safe_str(last.get('NOME_FANTASIA',''))} | CNPJ: {last.get('CPFCNPJPROPRIETARIO','—')}\n"
+        f"Endereço completo: {endereco}\n"
+        f"Sócios/decisores identificados: {socios_str}\n"
+        f"Na carteira De Nigris: {'Sim' if na_carteira else 'Não — é oportunidade em aberto'}"
+        + (f" | Vendedor responsável: {vendedor_resp}" if vendedor_resp else "")
+        + (f" | Classificação: {classificacao}" if classificacao else "") + "\n"
+        f"Total de compras históricas na base (desde {hist['Data emplacamento'].min():%m/%Y}): {len(hist)}\n"
+        f"Volume de compra por ano: {vol_ano_str}\n"
+        f"Modelo/marca preferida (mais comprado): {modelo_str}\n"
+        + (f"Projeção da próxima compra (baseada no padrão histórico dele): {pred_label}\n" if pred_label else "")
+        + f"Histórico completo de compras (mais recentes primeiro): {linhas_hist}"
+    )
     return ctx
 
 def buscar_cidade_contexto_ia(pergunta, df_emp, df_cart):
@@ -4349,25 +4500,42 @@ elif pagina == "assistente_ia":
         with st.chat_message("user"):
             st.markdown(pergunta_ia)
 
-        resumo_ctx = montar_resumo_executivo_ia(df_emp, df_cart, df_area)
-        cliente_ctx = buscar_cliente_contexto_ia(pergunta_ia, df_emp, df_cart)
-        cidade_ctx = buscar_cidade_contexto_ia(pergunta_ia, df_emp, df_cart)
+        try:
+            resumo_ctx = montar_resumo_executivo_ia(df_emp, df_cart, df_area)
+        except Exception as e:
+            resumo_ctx = f"(não consegui montar o resumo executivo agora: {e})"
+        try:
+            periodo_ctx = buscar_periodo_contexto_ia(pergunta_ia, df_emp)
+        except Exception:
+            periodo_ctx = ""
+        try:
+            cliente_ctx = buscar_cliente_contexto_ia(pergunta_ia, df_emp, df_cart, df_area)
+        except Exception:
+            cliente_ctx = ""
+        try:
+            cidade_ctx = buscar_cidade_contexto_ia(pergunta_ia, df_emp, df_cart)
+        except Exception:
+            cidade_ctx = ""
         escopo = ""
         if perfil == "vendedor":
             escopo = f"\nO usuário é o vendedor {nome}, atendendo a área/carteira dele — priorize essa perspectiva quando fizer sentido."
 
         prompt_final = f"""Você é o parceiro de confiança do time comercial da Comercial De Nigris (concessionária Mercedes-Benz de caminhões e vans em São Paulo) — pense em si mesmo como um colega experiente de mercado que o vendedor chama pra trocar uma ideia rápida, não como quem escreve um relatório formal.
 
+Você está conversando com {nome}. Chame a pessoa pelo nome dela pelo menos na primeira resposta da conversa (e depois de forma natural, sem repetir toda hora feito robô).
+
 COMO RESPONDER:
 - Converse normalmente, como numa mensagem de WhatsApp ou um bate-papo — frases corridas, sem títulos numerados tipo "1. Diagnóstico", sem sub-bullets em cascata (A., B., C.).
 - Pode usar 1-2 bullets soltos se ajudar a listar nomes/números, mas o grosso da resposta é texto corrido, direto ao ponto.
 - Vá direto pra resposta que a pessoa pediu. Nada de "Diagnóstico da Base de Dados" ou "Contexto Estratégico" como cabeçalho — só responda.
-- Use os dados abaixo como base real — nunca invente número que não está aqui. Se a pergunta pede algo bem específico (endereço exato, telefone, etc.) que não está nos dados fornecidos, diga isso rapidinho e já sugira o que der pra fazer com o que você TEM (que geralmente é bastante).
-- Sempre que a pergunta mencionar uma cidade ou um cliente específico, você vai encontrar logo abaixo um bloco de CONTEXTO ESPECÍFICO já filtrado pra isso — use esses dados primeiro, é a resposta mais precisa que você tem.
+- A base de emplacamentos cobre TODO o histórico (veja o período completo informado abaixo) — nunca diga que "não tem essa informação" se o que foi pedido está coberto pelo período histórico; olhe primeiro no bloco "EVOLUÇÃO ANO A ANO" e no CONTEXTO ESPECÍFICO DO PERÍODO antes de responder qualquer pergunta sobre mês, ano ou sazonalidade.
+- Use os dados abaixo como base real — nunca invente número que não está aqui. Só diga que não tem o dado se realmente não aparecer em nenhum dos blocos de contexto abaixo, e mesmo assim já sugira o que der pra fazer com o que você TEM.
+- Sempre que a pergunta mencionar uma cidade, um cliente ou um período específico (mês/ano), você vai encontrar logo abaixo um bloco de CONTEXTO ESPECÍFICO já filtrado pra isso — use esses dados primeiro, é a resposta mais precisa que você tem.
+- Se a pergunta for sobre um cliente e vier um bloco de contexto consultado na Receita Federal, deixe claro que esse CNPJ não tem histórico de compra na nossa base ainda — é oportunidade nova, não cliente atual.
 - Termine com uma sugestão prática e curta de próximo passo, não uma lista longa de "plano de ação".
 
-RESUMO EXECUTIVO DA BASE (últimos 12 meses):
 {resumo_ctx}
+{periodo_ctx}
 {cidade_ctx}
 {cliente_ctx}
 {escopo}
@@ -4377,7 +4545,10 @@ PERGUNTA DO USUÁRIO:
 
         with st.chat_message("assistant"):
             with st.spinner("Analisando..."):
-                resposta, erro = chamar_gemini(prompt_final, historico=st.session_state.chat_ia_historico)
+                try:
+                    resposta, erro = chamar_gemini(prompt_final, historico=st.session_state.chat_ia_historico)
+                except Exception as e:
+                    resposta, erro = None, f"Deu um erro inesperado aqui: {e}. Tenta de novo, se persistir avisa o gestor."
             if erro:
                 st.error(erro)
                 resposta = None
