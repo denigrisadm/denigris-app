@@ -594,8 +594,9 @@ def _gh_secrets():
         return "", "", "principal"
 
 def _gh_get_file(api_url, token):
-    """GET na API do GitHub. Retorna (conteúdo_bytes, sha) ou (None, '')."""
-    import urllib.request
+    """GET na API do GitHub. Retorna (conteúdo_bytes, sha) em caso de sucesso,
+    ou (None, "HTTP <código>: <motivo real>") em caso de falha — nunca esconde o erro."""
+    import urllib.request, urllib.error
     try:
         req = urllib.request.Request(
             api_url,
@@ -606,12 +607,21 @@ def _gh_get_file(api_url, token):
             data = json.loads(r.read().decode())
         content = base64.b64decode(data["content"].replace("\n",""))
         return content, data.get("sha","")
-    except Exception:
-        return None, ""
+    except urllib.error.HTTPError as e:
+        try:
+            corpo = json.loads(e.read().decode())
+            msg = corpo.get("message", str(e))
+        except Exception:
+            msg = str(e)
+        return None, f"HTTP {e.code}: {msg}"
+    except urllib.error.URLError as e:
+        return None, f"HTTP falha de conexão: {e.reason}"
+    except Exception as e:
+        return None, f"HTTP erro inesperado: {e}"
 
 def _gh_put_file(api_url, token, branch, content_bytes, sha, message="update users.json"):
-    """PUT na API do GitHub. Retorna True se ok."""
-    import urllib.request
+    """PUT na API do GitHub. Retorna (True, '') se ok, (False, motivo real do erro) se falhar."""
+    import urllib.request, urllib.error
     try:
         payload_dict = {
             "message": message,
@@ -630,9 +640,18 @@ def _gh_put_file(api_url, token, branch, content_bytes, sha, message="update use
                      "Accept": "application/vnd.github.v3+json"}
         )
         with urllib.request.urlopen(req, timeout=15): pass
-        return True
-    except Exception:
-        return False
+        return True, ""
+    except urllib.error.HTTPError as e:
+        try:
+            corpo = json.loads(e.read().decode())
+            msg = corpo.get("message", str(e))
+        except Exception:
+            msg = str(e)
+        return False, f"HTTP {e.code}: {msg}"
+    except urllib.error.URLError as e:
+        return False, f"Falha de conexão: {e.reason}"
+    except Exception as e:
+        return False, f"Erro inesperado: {e}"
 
 def load_users():
     """Carrega usuários: 1º tenta GitHub, 2º arquivo local, 3º default."""
@@ -761,8 +780,12 @@ def gemini_modelo():
     return cfg.get("gemini_modelo", "gemini-2.5-flash")
 
 def chamar_gemini(prompt, historico=None, temperature=0.4):
-    """Chama a API do Gemini (generateContent). Retorna (texto_resposta, erro)."""
+    """Chama a API do Gemini (generateContent). Retorna (texto_resposta, erro).
+    Roda em thread separada com timeout duro — se a rede travar de um jeito que o
+    timeout do socket não pegue, ainda assim a tela nunca fica esperando pra sempre."""
     import urllib.request, urllib.error
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutTimeout
+
     api_key = gemini_api_key()
     if not api_key:
         return None, "Chave da API Gemini não configurada. Peça ao gestor para cadastrar em Admin → Configurações."
@@ -780,13 +803,25 @@ def chamar_gemini(prompt, historico=None, temperature=0.4):
         "generationConfig": {"temperature": temperature, "maxOutputTokens": 2048},
     }).encode("utf-8")
 
-    try:
+    def _fazer_chamada():
         req = urllib.request.Request(url, data=payload, method="POST",
                                       headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with urllib.request.urlopen(req, timeout=25) as r:
             data = json.loads(r.read().decode("utf-8"))
-        texto = data["candidates"][0]["content"]["parts"][0]["text"]
+        return data["candidates"][0]["content"]["parts"][0]["text"]
+
+    try:
+        ex = ThreadPoolExecutor(max_workers=1)
+        future = ex.submit(_fazer_chamada)
+        try:
+            texto = future.result(timeout=30)  # limite duro — nunca passa disso, trave onde travar
+        finally:
+            # wait=False: NUNCA espera a thread travada terminar — isso é o que garante
+            # que o timeout acima seja real e não só "espera até 30s e trava mesmo assim".
+            ex.shutdown(wait=False, cancel_futures=True)
         return texto, None
+    except _FutTimeout:
+        return None, "A IA demorou demais pra responder (mais de 30s) e eu cancelei pra não travar sua tela. Tenta de novo — se continuar acontecendo, pode ser instabilidade momentânea da API do Gemini."
     except urllib.error.HTTPError as e:
         try:
             corpo = json.loads(e.read().decode("utf-8"))
@@ -824,8 +859,10 @@ def montar_resumo_executivo_ia(df_emp, df_cart, df_area):
     partes.append(f"TOTAL GERAL (todo o histórico): {total_geral} emplacamentos no mercado mapeado. De Nigris: {nigris_geral} ({ms_geral}% market share histórico).")
 
     # Ano a ano — permite a IA comparar sazonalidade e evolução sem precisar de outro filtro
-    df_emp["_ano_ref"] = df_emp["Data emplacamento"].dt.year
-    por_ano = df_emp.groupby("_ano_ref").apply(
+    # (usa uma Series solta, NUNCA escreve coluna nova no df_emp original — ele é compartilhado
+    # com o resto do app, e cache_data não isola mutação em cima do objeto de entrada)
+    _ano_ref = df_emp["Data emplacamento"].dt.year
+    por_ano = df_emp.groupby(_ano_ref).apply(
         lambda g: (len(g), int(is_denigris(g["Concessionário"]).sum())), include_groups=False
     )
     linhas_ano = []
@@ -4079,21 +4116,48 @@ elif pagina == "admin":
     with tab_cfg:
         st.markdown('<div class="sec-title">🤖 Assistente IA (Gemini)</div>', unsafe_allow_html=True)
         st.caption("A chave fica salva no repositório de dados (mesmo lugar dos usuários), não em texto público. Só quem tem acesso ao Admin consegue ver/trocar.")
+
+        # ── Diagnóstico de conexão GitHub — pra saber SE dá pra persistir de verdade ──
+        token_cfg, repo_cfg, branch_cfg = _gh_secrets()
+        if token_cfg and repo_cfg:
+            st.markdown(f'<div class="alert-blue" style="margin-bottom:10px;">✅ GitHub configurado — repo: <code>{repo_cfg}</code> · branch: <code>{branch_cfg}</code>. A chave salva aqui vai sobreviver a reinicializações do app.</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="background:#fff0f0;border-left:4px solid #c0392b;padding:10px 14px;border-radius:8px;margin-bottom:10px;font-size:12px;">🔴 <strong>GitHub não configurado</strong> (faltam <code>GH_TOKEN</code>/<code>GH_REPO</code> nos Secrets). Sem isso, a chave salva aqui SOME assim que o app reiniciar — ela só fica na memória da sessão atual. Configure em Settings → Secrets do seu provedor de hospedagem.</div>', unsafe_allow_html=True)
+
         cfg_atual = st.session_state.get("app_config") or {}
         with st.form("form_gemini_cfg"):
             nova_key = st.text_input("Chave da API Gemini", value=cfg_atual.get("gemini_api_key",""), type="password",
                                       help="Gere em https://aistudio.google.com/apikey")
             novo_modelo = st.text_input("Modelo", value=cfg_atual.get("gemini_modelo","gemini-2.5-flash"),
-                                        help="Ex: gemini-2.5-flash (rápido/barato) ou gemini-2.5-pro (mais robusto)")
+                                        help="Ex: gemini-2.5-flash ou o nome exato que a Google indicar em caso de erro 404")
             salvar_cfg = st.form_submit_button("💾 Salvar configuração", use_container_width=True)
         if salvar_cfg:
             novo_cfg = dict(cfg_atual)
             novo_cfg["gemini_api_key"] = nova_key.strip()
             novo_cfg["gemini_modelo"] = novo_modelo.strip() or "gemini-2.5-flash"
-            ok_cfg, err_cfg = save_config(novo_cfg)
-            st.session_state.app_config = novo_cfg
-            if ok_cfg: st.success("✅ Configuração salva!")
-            else: st.warning(f"Salvo localmente, mas não sincronizou com o GitHub ainda: {err_cfg}")
+            with st.spinner("Salvando e confirmando no GitHub..."):
+                ok_cfg, err_cfg = save_config(novo_cfg)
+                st.session_state.app_config = novo_cfg
+                # ── Confirma de verdade: lê de volta do GitHub pra garantir que gravou ──
+                verificado = False
+                if ok_cfg and token_cfg and repo_cfg:
+                    api_verif = f"https://api.github.com/repos/{repo_cfg}/contents/data/config.json"
+                    content_verif, _ = _gh_get_file(api_verif, token_cfg)
+                    if content_verif:
+                        try:
+                            cfg_lido = json.loads(content_verif.decode("utf-8"))
+                            verificado = cfg_lido.get("gemini_api_key","") == novo_cfg["gemini_api_key"]
+                        except Exception:
+                            verificado = False
+            if ok_cfg and verificado:
+                st.success("✅ Configuração salva e CONFIRMADA no GitHub — vai persistir mesmo se o app reiniciar.")
+            elif ok_cfg and not (token_cfg and repo_cfg):
+                st.warning("⚠️ Salvo só na memória desta sessão. Sem GitHub configurado, ela some no próximo reboot do app.")
+            elif ok_cfg and not verificado:
+                st.warning("⚠️ O envio pro GitHub não deu erro, mas a confirmação de leitura não bateu — tenta salvar de novo pra garantir, ou usa 'Testar conexão' abaixo pra ver se pegou.")
+            else:
+                st.error(f"❌ Não consegui salvar no GitHub. Motivo real: {err_cfg}")
+                st.caption("A chave ainda está disponível nesta sessão (pra você testar agora), mas vai sumir se o app reiniciar até isso ser corrigido. Erros comuns: token sem permissão de escrita no repositório, nome do repo errado, ou branch errado nos Secrets.")
 
         if gemini_api_key():
             st.success("✅ Assistente IA ativo — já disponível na aba 🤖 Assistente IA para todo o time.")
