@@ -1119,6 +1119,7 @@ def buscar_cidade_contexto_ia(pergunta, df_emp, df_cart):
     return ctx
 
 
+def registrar_acesso(login):
     users = st.session_state.get("users_db", load_users())
     if login in users:
         try:
@@ -3970,16 +3971,23 @@ elif pagina == "admin":
                 </div>
                 """, unsafe_allow_html=True)
 
+        usuario_ja_existe = new_login in USERS
+        if usuario_ja_existe:
+            st.caption("ℹ️ Login já existe — deixe os campos de senha em branco para manter a senha atual.")
+
         if st.button("💾 Salvar Usuário", use_container_width=True):
-            if not new_login or not new_nome or not new_senha:
-                st.error("Preencha login, nome e senha.")
+            if not new_login or not new_nome:
+                st.error("Preencha login e nome.")
+            elif not usuario_ja_existe and not new_senha:
+                st.error("Defina uma senha para o novo usuário.")
             elif new_senha != new_senha2:
                 st.error("Senhas não conferem.")
             elif new_perfil == "vendedor" and not new_cons_key:
                 st.error("Selecione o consultor vinculado.")
             else:
+                senha_hash_final = hash_senha(new_senha) if new_senha else USERS.get(new_login, {}).get("senha_hash")
                 USERS[new_login] = {
-                    "senha_hash": hash_senha(new_senha),
+                    "senha_hash": senha_hash_final,
                     "perfil": new_perfil,
                     "nome": new_nome,
                     "consultor_key": norm_str(new_cons_key) if new_cons_key else norm_str(new_login),
@@ -3994,16 +4002,20 @@ elif pagina == "admin":
                 st.rerun()
 
         st.markdown('<div class="sec-title">🗑️ Excluir Usuário</div>', unsafe_allow_html=True)
-        del_login = st.selectbox("Selecionar para excluir:", [l for l in USERS.keys() if l != u_key])
-        if st.button("❌ Excluir Usuário", use_container_width=True):
-            del USERS[del_login]
-            gh_ok, gh_err = save_users(USERS)
-            st.session_state.users_db = USERS
-            if gh_ok:
-                st.success(f"✅ Usuário {del_login} excluído e sincronizado!")
-            else:
-                st.warning(f"⚠️ Não sincronizou: {gh_err}")
-            st.rerun()
+        opcoes_exclusao = [l for l in USERS.keys() if l != u_key]
+        if not opcoes_exclusao:
+            st.info("Não há outros usuários para excluir.")
+        else:
+            del_login = st.selectbox("Selecionar para excluir:", opcoes_exclusao)
+            if st.button("❌ Excluir Usuário", use_container_width=True):
+                del USERS[del_login]
+                gh_ok, gh_err = save_users(USERS)
+                st.session_state.users_db = USERS
+                if gh_ok:
+                    st.success(f"✅ Usuário {del_login} excluído e sincronizado!")
+                else:
+                    st.warning(f"⚠️ Não sincronizou: {gh_err}")
+                st.rerun()
 
     # ── TAB DADOS ──
     with tab_d:
