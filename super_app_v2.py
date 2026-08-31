@@ -1119,7 +1119,6 @@ def buscar_cidade_contexto_ia(pergunta, df_emp, df_cart):
     return ctx
 
 
-def registrar_acesso(login):
     users = st.session_state.get("users_db", load_users())
     if login in users:
         try:
@@ -3252,18 +3251,31 @@ elif pagina == "gestao":
             if n: return n
         return ""
 
+    def _melhor_email_sdr(row):
+        # Prioriza o e-mail da empresa; se não tiver, cai pro e-mail dos sócios cadastrados.
+        e = safe_str(row.get("EMAIL", ""), "")
+        if e and "@" in e:
+            return e
+        for i in [1, 2, 3]:
+            e = safe_str(row.get(f"EMAIL_SOCIO{i}", ""), "")
+            if e and "@" in e:
+                return e
+        return ""
+
     if df_sdr.empty:
         st.info("Nenhum cliente com esses filtros.")
     else:
         df_sdr_cli = df_sdr.sort_values("Data emplacamento", ascending=False).groupby("CNPJ_NORM", as_index=False).first()
         df_sdr_cli["Celular"] = df_sdr_cli.apply(_melhor_celular_sdr, axis=1)
+        df_sdr_cli["E-mail"] = df_sdr_cli.apply(_melhor_email_sdr, axis=1)
         if apenas_com_celular_sdr:
             df_sdr_cli = df_sdr_cli[df_sdr_cli["Celular"] != ""]
 
-        lista_sdr = df_sdr_cli[["NOMEPROPRIETARIO", "Celular"]].rename(columns={"NOMEPROPRIETARIO": "Nome / Empresa"})
+        lista_sdr = df_sdr_cli[["NOMEPROPRIETARIO", "Celular", "E-mail"]].rename(columns={"NOMEPROPRIETARIO": "Nome / Empresa"})
         lista_sdr = lista_sdr.drop_duplicates(subset=["Celular"]).reset_index(drop=True)
 
-        st.caption(f"📋 **{len(lista_sdr)} contato(s)** prontos para campanha com os filtros atuais.")
+        n_com_email = int((lista_sdr["E-mail"] != "").sum())
+        st.caption(f"📋 **{len(lista_sdr)} contato(s)** prontos para campanha com os filtros atuais — **{n_com_email}** também com e-mail encontrado.")
         st.dataframe(lista_sdr.head(30), use_container_width=True, hide_index=True)
         if len(lista_sdr) > 30:
             st.caption(f"Mostrando 30 de {len(lista_sdr)} — a exportação traz a lista completa.")
@@ -3971,23 +3983,16 @@ elif pagina == "admin":
                 </div>
                 """, unsafe_allow_html=True)
 
-        usuario_ja_existe = new_login in USERS
-        if usuario_ja_existe:
-            st.caption("ℹ️ Login já existe — deixe os campos de senha em branco para manter a senha atual.")
-
         if st.button("💾 Salvar Usuário", use_container_width=True):
-            if not new_login or not new_nome:
-                st.error("Preencha login e nome.")
-            elif not usuario_ja_existe and not new_senha:
-                st.error("Defina uma senha para o novo usuário.")
+            if not new_login or not new_nome or not new_senha:
+                st.error("Preencha login, nome e senha.")
             elif new_senha != new_senha2:
                 st.error("Senhas não conferem.")
             elif new_perfil == "vendedor" and not new_cons_key:
                 st.error("Selecione o consultor vinculado.")
             else:
-                senha_hash_final = hash_senha(new_senha) if new_senha else USERS.get(new_login, {}).get("senha_hash")
                 USERS[new_login] = {
-                    "senha_hash": senha_hash_final,
+                    "senha_hash": hash_senha(new_senha),
                     "perfil": new_perfil,
                     "nome": new_nome,
                     "consultor_key": norm_str(new_cons_key) if new_cons_key else norm_str(new_login),
@@ -4002,20 +4007,16 @@ elif pagina == "admin":
                 st.rerun()
 
         st.markdown('<div class="sec-title">🗑️ Excluir Usuário</div>', unsafe_allow_html=True)
-        opcoes_exclusao = [l for l in USERS.keys() if l != u_key]
-        if not opcoes_exclusao:
-            st.info("Não há outros usuários para excluir.")
-        else:
-            del_login = st.selectbox("Selecionar para excluir:", opcoes_exclusao)
-            if st.button("❌ Excluir Usuário", use_container_width=True):
-                del USERS[del_login]
-                gh_ok, gh_err = save_users(USERS)
-                st.session_state.users_db = USERS
-                if gh_ok:
-                    st.success(f"✅ Usuário {del_login} excluído e sincronizado!")
-                else:
-                    st.warning(f"⚠️ Não sincronizou: {gh_err}")
-                st.rerun()
+        del_login = st.selectbox("Selecionar para excluir:", [l for l in USERS.keys() if l != u_key])
+        if st.button("❌ Excluir Usuário", use_container_width=True):
+            del USERS[del_login]
+            gh_ok, gh_err = save_users(USERS)
+            st.session_state.users_db = USERS
+            if gh_ok:
+                st.success(f"✅ Usuário {del_login} excluído e sincronizado!")
+            else:
+                st.warning(f"⚠️ Não sincronizou: {gh_err}")
+            st.rerun()
 
     # ── TAB DADOS ──
     with tab_d:
