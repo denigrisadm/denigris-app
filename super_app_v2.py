@@ -75,274 +75,207 @@ MESES_PT = {1:"Janeiro",2:"Fevereiro",3:"Março",4:"Abril",5:"Maio",6:"Junho",
             7:"Julho",8:"Agosto",9:"Setembro",10:"Outubro",11:"Novembro",12:"Dezembro"}
 
 # ════════════════════════════════════════════════════════════════
-# CSS — Design App Mobile-first, corporativo azul+dourado
+# CSS — Tema claro estilo Apple (tipografia do sistema, cartões, controle segmentado)
 # ════════════════════════════════════════════════════════════════
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
-*{font-family:'Plus Jakarta Sans',sans-serif!important;box-sizing:border-box;}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-/* ── RESET ── */
-[data-testid="stAppViewContainer"]{background:#f4f6fb!important;color:#1a1e2a!important;}
+:root{
+  --bg:#f5f5f7; --card:#ffffff; --ink:#1d1d1f; --ink2:#424245; --muted:#86868b;
+  --line:rgba(0,0,0,0.08); --line2:#d2d2d7; --accent:#0071e3; --accent-h:#0077ed;
+  --accent-soft:#e8f2fd; --green:#248a3d; --red:#d70015; --orange:#c93400; --gold:#b25000;
+  --r-lg:20px; --r-md:14px; --r-sm:10px;
+  --sh-1:0 1px 2px rgba(0,0,0,0.04),0 2px 8px rgba(0,0,0,0.04);
+  --sh-2:0 4px 24px rgba(0,0,0,0.08);
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Inter","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+}
+
+/* Tipografia do sistema — sem tocar nos ícones (antes o "*" quebrava o ícone de mostrar senha) */
+html,body,.stApp,.stApp p,.stApp div,.stApp label,.stApp input,.stApp textarea,.stApp button,.stApp li,
+.stApp h1,.stApp h2,.stApp h3,.stApp h4,.stApp td,.stApp th,.stApp a,
+.stApp span:not([data-testid="stIconMaterial"]):not([class*="material"]):not(.glyphicon){
+  font-family:var(--font)!important; -webkit-font-smoothing:antialiased; letter-spacing:-0.01em;
+}
+[data-testid="stIconMaterial"],[class*="material-symbols"],[class*="material-icons"]{
+  font-family:"Material Symbols Rounded","Material Symbols Outlined","Material Icons"!important;
+  letter-spacing:normal!important;
+}
+*{box-sizing:border-box;}
+
+/* ── Base ── */
+[data-testid="stAppViewContainer"],.stApp{background:var(--bg)!important;color:var(--ink)!important;}
+[data-testid="stHeader"]{display:none!important;}
 [data-testid="stSidebar"],[data-testid="collapsedControl"]{display:none!important;}
-.main .block-container{padding:0!important;max-width:100%!important;}
-section[data-testid="stVerticalBlock"]{gap:0!important;}
-div[data-testid="stVerticalBlockBorderWrapper"]{padding:0!important;}
+.main .block-container,[data-testid="stMainBlockContainer"]{padding:0 24px 64px 24px!important;max-width:1180px!important;margin:0 auto!important;}
+/* blocos que só carregam <style>/<link> não ocupam espaço (o CSS continua valendo) */
+[data-testid="stElementContainer"]:has(style):not(:has(.topbar)):not(:has(.page-header)):not(:has(.kpi-card)),
+[data-testid="stElementContainer"]:has(link[rel]),[data-testid="stElementContainer"]:has(.page-wrap){display:none!important;}
+#MainMenu,footer,[data-testid="stToolbar"],[data-testid="stDecoration"]{display:none!important;}
+[data-testid="stVerticalBlock"]{gap:0.75rem;}
 
-/* ── TOPBAR ── */
+/* ── Barra superior translúcida ── */
 .topbar{
-  background:linear-gradient(135deg,#0a1628 0%,#0d1f3c 100%);
-  border-bottom:2px solid #c8a84b;
-  padding:0 20px; height:60px;
-  display:flex; align-items:center; justify-content:space-between;
-  position:sticky; top:0; z-index:9999;
+  background:rgba(255,255,255,0.72)!important;
+  backdrop-filter:saturate(180%) blur(20px); -webkit-backdrop-filter:saturate(180%) blur(20px);
+  border-bottom:1px solid var(--line)!important;
+  height:56px; padding:0 max(16px,calc((100% - 1180px)/2)); display:flex; align-items:center; justify-content:space-between;
+  position:sticky; top:0; z-index:9999; margin:0 0 4px 0;
+  width:100vw; margin-left:calc(50% - 50vw);
 }
-.topbar-logo img{height:32px;object-fit:contain;}
+.topbar-logo img{height:30px;border-radius:7px;}
 .topbar-user{display:flex;align-items:center;gap:10px;}
-.topbar-avatar{
-  width:34px;height:34px;
-  background:linear-gradient(135deg,#c8a84b,#e8c96b);
-  border-radius:50%;
-  display:flex;align-items:center;justify-content:center;
-  font-size:13px;font-weight:800;color:#0a1628;
-}
 .topbar-info{text-align:right;}
-.topbar-name{font-size:12px;color:#fff;font-weight:700;line-height:1.3;}
-.topbar-role{font-size:9px;color:#c8a84b;text-transform:uppercase;letter-spacing:1.5px;margin-top:1px;}
-.topbar-area{font-size:10px;color:rgba(200,168,75,0.8);margin-top:2px;letter-spacing:0.3px;}
+.topbar-name{font-size:13px;color:var(--ink)!important;font-weight:600;line-height:1.25;}
+.topbar-role{font-size:11px;color:var(--muted)!important;font-weight:500;letter-spacing:0;text-transform:none;}
+.topbar-area{font-size:11px;color:var(--muted)!important;}
+.topbar-avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(180deg,#5ac8fa,#0071e3)!important;
+  color:#fff!important;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;}
 
-/* ── NAVEGAÇÃO — desktop pill buttons ── */
-div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] > div > div > .stButton > button {
-  background:linear-gradient(135deg,#0d1f3c 0%,#1a3355 100%)!important;
-  color:#c8a84b!important;
-  border:1.5px solid rgba(200,168,75,0.3)!important;
-  border-radius:14px!important;
-  font-weight:700!important;
-  font-size:12px!important;
-  padding:12px 6px!important;
-  box-shadow:0 4px 15px rgba(10,22,40,0.25),0 1px 4px rgba(0,0,0,0.15)!important;
-  transition:all 0.2s cubic-bezier(.34,1.56,.64,1)!important;
-  min-height:50px!important;
-  letter-spacing:0.2px!important;
-  position:relative!important;
+/* ── Navegação: controle segmentado ── */
+.nav-wrap{max-width:1180px;margin:0 auto;padding:0 16px;}
+[data-testid="stButtonGroup"]{
+  background:rgba(118,118,128,0.12); border-radius:12px; padding:3px; gap:2px!important;
+  display:flex!important; flex-wrap:nowrap!important; overflow-x:auto; scrollbar-width:none; width:100%;
 }
-div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] > div > div > .stButton > button:hover {
-  background:linear-gradient(135deg,#c8a84b 0%,#e8c96b 100%)!important;
-  color:#0a1628!important;
-  border-color:#c8a84b!important;
-  box-shadow:0 8px 25px rgba(200,168,75,0.35),0 2px 8px rgba(0,0,0,0.2)!important;
-  transform:translateY(-3px) scale(1.03)!important;
+[data-testid="stButtonGroup"]::-webkit-scrollbar{display:none;}
+[data-testid="stHorizontalBlock"]:has(.st-key-btn_sair){flex-wrap:nowrap!important;gap:8px!important;align-items:center;}
+[data-testid="stHorizontalBlock"]:has(.st-key-btn_sair) > [data-testid="stColumn"]:first-child{flex:1 1 auto!important;min-width:0!important;width:auto!important;}
+[data-testid="stHorizontalBlock"]:has(.st-key-btn_sair) > [data-testid="stColumn"]:last-child{flex:0 0 auto!important;width:auto!important;min-width:0!important;}
+.st-key-btn_sair button{width:auto!important;white-space:nowrap;}
+[data-testid="stButtonGroup"] button{
+  background:transparent!important; border:none!important; box-shadow:none!important;
+  color:var(--ink2)!important; font-size:13px!important; font-weight:500!important;
+  border-radius:9px!important; padding:7px 12px!important; min-height:34px!important; white-space:nowrap!important;
+  flex:1 0 auto; transition:background .2s ease,color .2s ease!important;
 }
-div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] > div > div > .stButton > button:active {
-  transform:translateY(-1px) scale(0.98)!important;
-  box-shadow:0 4px 12px rgba(200,168,75,0.25)!important;
-}
-/* botão Sair */
-div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:last-child > div > div > .stButton > button {
-  background:linear-gradient(135deg,#3a0a0a 0%,#5a1010 100%)!important;
-  color:#ff8870!important;
-  border-color:rgba(255,100,80,0.35)!important;
-  box-shadow:0 4px 15px rgba(80,10,10,0.3)!important;
-}
-div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:last-child > div > div > .stButton > button:hover {
-  background:linear-gradient(135deg,#cc3300 0%,#ee4411 100%)!important;
-  color:#fff!important;
-  border-color:#cc3300!important;
-  box-shadow:0 8px 25px rgba(200,50,0,0.4)!important;
-  transform:translateY(-3px) scale(1.03)!important;
+[data-testid="stButtonGroup"] button:hover{background:rgba(255,255,255,0.6)!important;color:var(--ink)!important;}
+[data-testid="stButtonGroup"] button[kind*="Active"],[data-testid="stButtonGroup"] button[aria-checked="true"],
+[data-testid="stButtonGroup"] button[aria-pressed="true"]{
+  background:#fff!important; color:var(--ink)!important; font-weight:600!important;
+  box-shadow:0 1px 3px rgba(0,0,0,0.12),0 1px 1px rgba(0,0,0,0.04)!important;
 }
 
-/* NAV WRAPPER — fundo escuro flutuante */
-div[data-testid="stHorizontalBlock"]:has(.stButton){
-  background:linear-gradient(180deg,#f4f6fb 0%,rgba(244,246,251,0.0) 100%)!important;
-  padding:10px 14px 8px 14px!important;
-  border-bottom:1px solid rgba(200,168,75,0.15)!important;
-  position:sticky!important;
-  top:60px!important;
-  z-index:9990!important;
-  backdrop-filter:blur(10px)!important;
-  -webkit-backdrop-filter:blur(10px)!important;
-}
+/* ── Conteúdo ── */
+.page-wrap{padding:8px 16px 40px 16px;max-width:1180px;margin:0 auto;}
 
-/* ── MOBILE ── */
-@media (max-width: 640px) {
-  .page-wrap{padding:12px 10px 80px 10px!important;}
-  .kpi-grid{grid-template-columns:repeat(2,1fr)!important;gap:8px!important;}
-  .kpi-grid-3{grid-template-columns:repeat(2,1fr)!important;}
-  .kpi-value{font-size:22px!important;}
-  .topbar{padding:0 12px!important;}
-  .hero-name{font-size:15px!important;}
-  .hero-stats{flex-wrap:wrap!important;}
-  .hero-stat{min-width:80px!important;}
-  .info-label{width:90px!important;min-width:90px!important;}
-  div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] > div > div > .stButton > button {
-    font-size:10px!important;
-    padding:8px 2px!important;
-    min-height:44px!important;
-    border-radius:10px!important;
-  }
-}
+.page-header{margin:14px 0 6px 0;}
+.page-header h1{font-size:32px;font-weight:700;color:var(--ink)!important;margin:0 0 4px 0;padding:0!important;letter-spacing:-0.02em;line-height:1.1;}
+.page-header p{font-size:15px;color:var(--muted)!important;margin:0;}
 
-/* ── CONTEÚDO ── */
-.page-wrap{padding:20px 16px 90px 16px;max-width:900px;margin:0 auto;}
-.page-header{margin-bottom:20px;}
-.page-header h1{font-size:22px;font-weight:800;color:#0a1628;margin:0 0 2px 0;}
-.page-header p{font-size:12px;color:#8a95b0;margin:0;}
+/* ── Cartões de indicador ── */
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;}
+.kpi-grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;}
+.kpi-card{background:var(--card)!important;border-radius:var(--r-lg)!important;padding:18px!important;
+  box-shadow:var(--sh-1)!important;border:1px solid var(--line)!important;position:relative;overflow:hidden;}
+.kpi-card::before{display:none!important;}
+.kpi-label{font-size:12px!important;text-transform:none!important;letter-spacing:0!important;color:var(--muted)!important;font-weight:500!important;margin-bottom:6px;}
+.kpi-value{font-size:30px!important;font-weight:700!important;color:var(--ink);line-height:1.05;letter-spacing:-0.02em;}
+.kpi-value.green{color:var(--green)!important;} .kpi-value.red{color:var(--red)!important;}
+.kpi-value.blue{color:var(--accent)!important;} .kpi-value.gold{color:var(--gold)!important;}
+.kpi-sub{font-size:12px;color:var(--muted)!important;margin-top:4px;}
 
-/* ── LOGIN ── */
-.login-bg{
-  min-height:100vh;
-  background:linear-gradient(160deg,#0a1628 0%,#0d1f3c 60%,#0a1628 100%);
-  display:flex; align-items:center; justify-content:center;
-  padding:24px 16px;
-}
-.login-card{
-  background:#fff; border-radius:24px;
-  padding:40px 28px; width:100%; max-width:380px;
-  box-shadow:0 32px 64px rgba(0,0,0,0.35);
-}
-.login-logo{text-align:center;margin-bottom:32px;}
-.login-logo img{height:52px;object-fit:contain;}
-.login-logo .logo-text{
-  font-size:20px;font-weight:800;color:#0a1628;
-  margin-top:10px;display:block;
-}
-.login-logo .logo-sub{font-size:11px;color:#8a95b0;text-transform:uppercase;letter-spacing:2px;}
+.sec-title{font-size:20px!important;font-weight:700!important;color:var(--ink)!important;margin:28px 0 12px 0!important;
+  padding:0!important;border:none!important;letter-spacing:-0.01em;display:flex;align-items:center;gap:8px;}
 
-/* ── KPI CARDS ── */
-.kpi-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:20px;}
-.kpi-grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px;}
-.kpi-card{
-  background:#fff; border-radius:16px;
-  padding:16px 14px; position:relative; overflow:hidden;
-  box-shadow:0 2px 12px rgba(0,0,0,0.06);
-  border:1px solid #f0f2f8;
-}
-.kpi-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#0a1628,#c8a84b);}
-.kpi-label{font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:#8a95b0;margin-bottom:6px;font-weight:700;}
-.kpi-value{font-size:26px;font-weight:800;color:#0a1628;line-height:1;}
-.kpi-value.green{color:#007030;}
-.kpi-value.red{color:#a02020;}
-.kpi-value.blue{color:#0044aa;}
-.kpi-value.gold{color:#b8860b;}
-.kpi-sub{font-size:11px;color:#8a95b0;margin-top:4px;}
-
-/* ── SECTION TITLE ── */
-.sec-title{
-  font-size:14px;font-weight:800;color:#0a1628;
-  margin:24px 0 12px 0;padding-bottom:8px;
-  border-bottom:2px solid #e8ecf5;
-  display:flex;align-items:center;gap:6px;
-}
-
-/* ── CARDS QUADRANTES ── */
-.quadrant{
-  background:#fff;border-radius:16px;padding:16px;
-  box-shadow:0 2px 12px rgba(0,0,0,0.06);
-  border:1px solid #f0f2f8;
-  margin-bottom:14px;
-}
-.quadrant-header{
-  display:flex;align-items:center;justify-content:space-between;
-  margin-bottom:12px;
-}
-.quadrant-title{font-size:13px;font-weight:800;color:#0a1628;}
-.quadrant-count{
-  font-size:22px;font-weight:800;
-  min-width:44px;height:44px;border-radius:12px;
-  display:flex;align-items:center;justify-content:center;
-  font-size:20px;
-}
-.q-red{background:#ffeee8;color:#cc3300;}
-.q-yellow{background:#fff8e0;color:#b8860b;}
-.q-green{background:#e8f8ee;color:#007030;}
-.q-blue{background:#e8f0ff;color:#0044aa;}
-
-/* ── INFO TABLE ── */
-.info-card{background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,0.05);border:1px solid #f0f2f8;margin-bottom:14px;}
-.info-row{display:flex;align-items:flex-start;padding:10px 14px;border-bottom:1px solid #f4f6fb;}
+.quadrant,.info-card{background:var(--card)!important;border-radius:var(--r-lg)!important;border:1px solid var(--line)!important;box-shadow:var(--sh-1)!important;}
+.quadrant{padding:18px;margin-bottom:14px;}
+.quadrant-title{font-size:15px;font-weight:600;color:var(--ink)!important;}
+.quadrant-count{font-size:20px;font-weight:700;min-width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;}
+.q-red{background:#fff0f0;color:var(--red);} .q-yellow{background:#fff6e5;color:var(--gold);}
+.q-green{background:#eaf7ee;color:var(--green);} .q-blue{background:var(--accent-soft);color:var(--accent);}
+.info-row{display:flex;padding:12px 16px;border-bottom:1px solid var(--line);}
 .info-row:last-child{border-bottom:none;}
-.info-label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#8a95b0;width:120px;min-width:120px;padding-top:2px;font-weight:700;}
-.info-value{font-size:13px;color:#1a2a3a;font-weight:500;flex:1;word-break:break-word;}
-.info-value strong{color:#0a1628;font-weight:800;}
+.info-label{font-size:13px!important;color:var(--muted)!important;text-transform:none!important;letter-spacing:0!important;font-weight:500!important;width:140px;min-width:140px;}
+.info-value{font-size:14px;color:var(--ink)!important;font-weight:500;flex:1;word-break:break-word;}
+.info-value strong{color:var(--ink)!important;font-weight:600;}
 
-/* ── CONTACT BUTTONS ── */
-.contact-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;}
-.contact-btn{
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  padding:12px 8px;border-radius:14px;text-decoration:none!important;
-  border:1px solid; gap:4px; transition:all 0.2s;
-  font-size:11px;font-weight:700;text-align:center;
+/* Cartão de destaque do cliente — grafite Apple */
+.client-hero{background:linear-gradient(160deg,#1d1d1f 0%,#2c2c2e 100%)!important;border-radius:var(--r-lg)!important;padding:22px!important;margin-bottom:16px;box-shadow:var(--sh-2);}
+.client-hero::after{display:none!important;}
+.hero-name{font-size:22px!important;font-weight:700!important;color:#f5f5f7!important;letter-spacing:-0.01em;}
+.hero-cnpj{font-size:13px!important;color:#a1a1a6!important;font-family:ui-monospace,"SF Mono",Menlo,monospace!important;}
+.hero-stats{display:flex;gap:10px;margin-top:16px;}
+.hero-stat{background:rgba(255,255,255,0.08)!important;border-radius:14px!important;padding:12px 14px;text-align:center;flex:1;}
+.hero-stat-val{font-size:24px!important;font-weight:700!important;color:#fff!important;}
+.hero-stat-lbl{font-size:11px!important;color:#a1a1a6!important;text-transform:none!important;letter-spacing:0!important;}
+
+/* Contato */
+.contact-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px;}
+.contact-btn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:14px 8px;
+  border-radius:var(--r-md);text-decoration:none!important;border:1px solid var(--line)!important;font-size:13px;font-weight:600;
+  background:var(--card)!important;transition:transform .15s ease,box-shadow .15s ease;}
+.contact-btn:hover{transform:translateY(-1px);box-shadow:var(--sh-2);}
+.btn-phone{color:var(--accent)!important;} .btn-whatsapp{color:var(--green)!important;} .btn-email{color:var(--orange)!important;}
+
+/* Selos e alertas */
+.badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;text-transform:none;letter-spacing:0;}
+.badge-top{background:#fff6e5;color:var(--gold);border:none;} .badge-ativo{background:#eaf7ee;color:var(--green);border:none;}
+.badge-baixa{background:#fff3e8;color:var(--orange);border:none;} .badge-inativo{background:#fff0f0;color:var(--red);border:none;}
+.alert-red,.alert-yellow,.alert-green,.alert-blue{border-left:none!important;border-radius:var(--r-md)!important;padding:14px 16px!important;font-size:14px!important;margin:10px 0;}
+.alert-red{background:#fff0f0!important;color:#8a0010!important;} .alert-yellow{background:#fff6e5!important;color:#7a3d00!important;}
+.alert-green{background:#eaf7ee!important;color:#14532d!important;} .alert-blue{background:var(--accent-soft)!important;color:#0a3d75!important;}
+.socio-card{background:var(--card)!important;border:1px solid var(--line)!important;border-radius:var(--r-md)!important;padding:14px;margin-bottom:10px;}
+.socio-name{font-size:15px;font-weight:600;color:var(--ink)!important;}
+.socio-role{font-size:12px;color:var(--accent)!important;text-transform:none;letter-spacing:0;font-weight:500;}
+.upload-box{background:var(--card)!important;border:1.5px dashed var(--line2)!important;border-radius:var(--r-lg)!important;padding:18px;margin-bottom:12px;}
+.upload-title{font-size:15px!important;font-weight:600!important;text-transform:none!important;letter-spacing:0!important;color:var(--ink)!important;}
+
+/* ── Componentes Streamlit ── */
+.stTextInput input,.stNumberInput input,.stTextArea textarea,.stDateInput input{
+  background:var(--card)!important;border:1px solid var(--line2)!important;color:var(--ink)!important;
+  border-radius:12px!important;font-size:15px!important;padding:10px 14px!important;min-height:44px;}
+.stTextInput input:focus,.stTextArea textarea:focus{border-color:var(--accent)!important;box-shadow:0 0 0 4px rgba(0,113,227,0.15)!important;outline:none!important;}
+[data-baseweb="input"],[data-baseweb="base-input"]{background:transparent!important;border:none!important;}
+
+.stButton>button,.stDownloadButton>button,.stFormSubmitButton>button,.stLinkButton>a{
+  background:var(--accent)!important;color:#fff!important;border:none!important;border-radius:980px!important;
+  font-weight:500!important;font-size:15px!important;padding:10px 20px!important;min-height:44px;width:100%;
+  box-shadow:none!important;transition:background .2s ease,transform .1s ease!important;}
+.stButton>button:hover,.stDownloadButton>button:hover,.stFormSubmitButton>button:hover{background:var(--accent-h)!important;color:#fff!important;}
+.stButton>button:active,.stDownloadButton>button:active{transform:scale(0.98);}
+
+.stButton>button p,.stDownloadButton>button p{color:inherit!important;font-weight:inherit!important;}
+.st-key-btn_sair button{background:transparent!important;color:var(--red)!important;min-height:34px!important;padding:6px 12px!important;font-size:13px!important;}
+.st-key-btn_sair button:hover{background:#fff0f0!important;}
+
+.stSelectbox [data-baseweb="select"]>div,.stMultiSelect [data-baseweb="select"]>div{
+  background:var(--card)!important;border:1px solid var(--line2)!important;border-radius:12px!important;min-height:44px;}
+.stTabs [data-baseweb="tab-list"]{background:rgba(118,118,128,0.12)!important;border-radius:12px!important;padding:3px!important;gap:2px!important;border:none!important;}
+.stTabs [data-baseweb="tab"]{background:transparent!important;border-radius:9px!important;font-weight:500!important;font-size:13px!important;color:var(--ink2)!important;padding:7px 14px!important;height:auto!important;}
+.stTabs [aria-selected="true"]{background:#fff!important;color:var(--ink)!important;font-weight:600!important;box-shadow:0 1px 3px rgba(0,0,0,0.12)!important;}
+.stTabs [data-baseweb="tab-highlight"],.stTabs [data-baseweb="tab-border"]{display:none!important;}
+div[data-testid="stExpander"]{background:var(--card)!important;border:1px solid var(--line)!important;border-radius:var(--r-md)!important;box-shadow:var(--sh-1);}
+div[data-testid="stExpander"] summary{font-weight:600!important;color:var(--ink)!important;}
+[data-testid="stDataFrame"],.stDataFrame{border-radius:var(--r-md)!important;overflow:hidden!important;border:1px solid var(--line)!important;background:var(--card);}
+[data-testid="stMetric"]{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);padding:14px 16px;box-shadow:var(--sh-1);}
+[data-testid="stMetricLabel"] p{color:var(--muted)!important;font-size:13px!important;}
+[data-testid="stMetricValue"]{color:var(--ink)!important;font-weight:700!important;}
+[data-testid="stAlert"]{border-radius:var(--r-md)!important;border:none!important;}
+[data-testid="stFileUploaderDropzone"]{background:var(--card)!important;border:1.5px dashed var(--line2)!important;border-radius:var(--r-lg)!important;}
+[data-testid="stForm"]{border:none!important;padding:0!important;background:transparent!important;}
+iframe{border-radius:var(--r-lg);}
+hr{border-color:var(--line)!important;}
+
+/* ── Celular ── */
+@media (max-width:640px){
+  .topbar{height:52px;padding:0 14px;}
+  .topbar-info{display:none;}
+  .page-header h1{font-size:26px;}
+  .page-header p{font-size:14px;}
+  .kpi-grid,.kpi-grid-3{grid-template-columns:repeat(2,1fr)!important;gap:10px!important;}
+  .kpi-value{font-size:24px!important;}
+  .kpi-card{padding:14px!important;}
+  .hero-name{font-size:18px!important;}
+  .hero-stats{flex-wrap:wrap;}
+  .hero-stat{min-width:80px;}
+  .info-label{width:100px;min-width:100px;}
+  [data-testid="stButtonGroup"] button{font-size:12px!important;padding:6px 10px!important;}
+  /* indicadores 2 por linha no celular */
+  [data-testid="stHorizontalBlock"]:has(.kpi-card){flex-wrap:wrap!important;gap:10px!important;}
+  [data-testid="stHorizontalBlock"]:has(.kpi-card) > [data-testid="stColumn"]{flex:1 1 calc(50% - 10px)!important;min-width:calc(50% - 10px)!important;width:calc(50% - 10px)!important;}
+  .contact-grid{grid-template-columns:repeat(3,1fr);}
 }
-.contact-btn .cb-icon{font-size:22px;}
-.btn-phone{background:#e8f4ff;color:#0055bb;border-color:#c0d8f8;}
-.btn-whatsapp{background:#e8fff2;color:#007a3d;border-color:#a0e8c0;}
-.btn-email{background:#fff8e8;color:#a06000;border-color:#f0d090;}
-
-/* ── BADGES ── */
-.badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;gap:4px;}
-.badge-top{background:#fff8e0;color:#8a6000;border:1px solid #f0d080;}
-.badge-ativo{background:#e0f8e8;color:#007030;border:1px solid #80d090;}
-.badge-baixa{background:#fff4e0;color:#a05000;border:1px solid #f0c070;}
-.badge-inativo{background:#ffeee8;color:#a02020;border:1px solid #f0a090;}
-
-/* ── ALERTS ── */
-.alert-red{background:#ffeee8;border-left:4px solid #cc3300;border-radius:10px;padding:12px 14px;color:#8a2200;margin:10px 0;font-size:13px;}
-.alert-yellow{background:#fff8e0;border-left:4px solid #e8a000;border-radius:10px;padding:12px 14px;color:#8a5000;margin:10px 0;font-size:13px;}
-.alert-green{background:#e8f8ee;border-left:4px solid #00aa55;border-radius:10px;padding:12px 14px;color:#005530;margin:10px 0;font-size:13px;}
-.alert-blue{background:#e8f0ff;border-left:4px solid #0055cc;border-radius:10px;padding:12px 14px;color:#003080;margin:10px 0;font-size:13px;}
-
-/* ── SOCIO CARD ── */
-.socio-card{background:#f8f9fc;border:1px solid #e8ecf5;border-radius:14px;padding:14px;margin-bottom:10px;}
-.socio-name{font-size:14px;font-weight:800;color:#0a1628;margin-bottom:2px;}
-.socio-role{font-size:10px;color:#0055aa;text-transform:uppercase;letter-spacing:0.8px;font-weight:700;}
-
-/* ── CLIENT HERO ── */
-.client-hero{
-  background:linear-gradient(135deg,#0a1628,#0d1f3c);
-  border-radius:18px;padding:20px;margin-bottom:16px;
-  position:relative;overflow:hidden;
-}
-.client-hero::after{content:'';position:absolute;right:-40px;top:-40px;
-  width:160px;height:160px;background:radial-gradient(circle,rgba(200,168,75,0.1) 0%,transparent 70%);border-radius:50%;}
-.hero-name{font-size:18px;font-weight:800;color:#fff;line-height:1.3;margin-bottom:4px;}
-.hero-cnpj{font-size:12px;color:#c8a84b;font-family:monospace;letter-spacing:1px;}
-.hero-stats{display:flex;gap:10px;margin-top:14px;}
-.hero-stat{background:rgba(255,255,255,0.08);border-radius:12px;padding:10px 14px;text-align:center;flex:1;}
-.hero-stat-val{font-size:22px;font-weight:800;color:#c8a84b;}
-.hero-stat-lbl{font-size:9px;color:#8899bb;text-transform:uppercase;letter-spacing:1px;}
-
-/* ── UPLOAD SECTION ── */
-.upload-box{background:#fff;border:2px dashed #d0d8ee;border-radius:14px;padding:16px;margin-bottom:12px;}
-.upload-title{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:0.8px;color:#0a1628;margin-bottom:6px;}
-
-/* ── STREAMLIT OVERRIDES ── */
-.stTextInput input{background:#f8f9fc!important;border:1.5px solid #dde2f0!important;color:#1a1e2a!important;border-radius:12px!important;font-size:14px!important;padding:12px 14px!important;}
-.stTextInput input:focus{border-color:#0a1628!important;box-shadow:0 0 0 3px rgba(10,22,40,0.08)!important;}
-.stButton>button{
-  background:linear-gradient(135deg,#0a1628,#142038)!important;
-  color:#c8a84b!important;border:none!important;border-radius:12px!important;
-  font-weight:700!important;padding:12px 20px!important;font-size:14px!important;
-  letter-spacing:0.3px!important;width:100%;
-  box-shadow:0 4px 14px rgba(10,22,40,0.2)!important;
-  transition:all 0.2s!important;
-}
-.stButton>button:hover{transform:translateY(-1px)!important;box-shadow:0 6px 20px rgba(10,22,40,0.3)!important;}
-.stButton>button[kind="secondary"]{background:#f0f2f7!important;color:#0a1628!important;border:1.5px solid #dde2f0!important;box-shadow:none!important;}
-.stSelectbox>div>div,.stMultiSelect>div>div{background:#f8f9fc!important;border:1.5px solid #dde2f0!important;border-radius:12px!important;}
-.stDataFrame{border-radius:12px!important;overflow:hidden!important;}
-[data-testid="stDataFrame"] thead tr th{background:#0a1628!important;color:#c8a84b!important;font-weight:700!important;font-size:11px!important;text-transform:uppercase!important;}
-.stTabs [data-baseweb="tab-list"]{background:#f0f2f7;border-radius:12px;padding:4px;gap:4px;}
-.stTabs [data-baseweb="tab"]{background:transparent;border-radius:10px;font-weight:700;font-size:12px;color:#4a5568;padding:8px 14px!important;}
-.stTabs [aria-selected="true"]{background:#0a1628!important;color:#c8a84b!important;}
-.stDownloadButton>button{background:linear-gradient(135deg,#0a1628,#142038)!important;color:#c8a84b!important;font-weight:700!important;border:none!important;border-radius:12px!important;}
-div[data-testid="stExpander"]{background:#fff;border:1.5px solid #e8ecf5!important;border-radius:14px!important;}
-.stSuccess{border-radius:12px!important;}
-.stWarning{border-radius:12px!important;}
-.stInfo{border-radius:12px!important;}
-
-/* Hide streamlit extras */
-#MainMenu,footer,[data-testid="stToolbar"]{display:none!important;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -2203,11 +2136,11 @@ df_emp = st.session_state.get("_df_emp_merged") if st.session_state.df_emp_list 
 # LOGIN
 # ════════════════════════════════════════════════════════════════
 if st.session_state.user is None:
-    logo_html = logo_img(52) if LOGO_B64 else '<span style="font-size:24px;font-weight:800;color:#0a1628;">Comercial De Nigris</span>'
+    logo_html = logo_img(72) if LOGO_B64 else '<span style="font-size:24px;font-weight:800;color:#1d1d1f;">Comercial De Nigris</span>'
     st.markdown("""
     <style>
     [data-testid="stAppViewContainer"] {
-        background: linear-gradient(160deg, #0a1628 0%, #0d1f3c 60%, #0a1628 100%) !important;
+        background: radial-gradient(1200px 600px at 50% -10%, #ffffff 0%, #f5f5f7 60%) !important;
         min-height: 100vh;
     }
     [data-testid="stMain"], section[data-testid="stMain"] > div {
@@ -2218,27 +2151,28 @@ if st.session_state.user is None:
         padding-bottom: 0 !important;
         max-width: 100% !important;
     }
-    /* Form sem borda */
+    /* Formulário como cartão único estilo Apple */
     [data-testid="stForm"] {
-        border: none !important;
-        padding: 0 !important;
-        background: transparent !important;
-        box-shadow: none !important;
+        border: 1px solid rgba(0,0,0,0.06) !important;
+        padding: 28px 24px !important;
+        background: #ffffff !important;
+        border-radius: 22px !important;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.08) !important;
     }
+    [data-testid="stMainBlockContainer"]{max-width:440px!important;}
     </style>
     """, unsafe_allow_html=True)
 
-    col_l, col_c, col_r = st.columns([1, 2, 1])
+    col_l, col_c, col_r = st.columns([1, 40, 1])
     with col_c:
         st.markdown(f"""
-        <div style="background:#fff;border-radius:24px;padding:36px 28px 20px 28px;
-                    box-shadow:0 32px 64px rgba(0,0,0,0.35);margin-top:60px;text-align:center;">
-            <div style="background:#0a1628;border-radius:16px;padding:14px 20px;
-                        display:inline-block;margin-bottom:10px;">
+        <div style="background:transparent;padding:0 0 18px 0;margin-top:9vh;text-align:center;">
+            <div style="display:inline-block;border-radius:22px;overflow:hidden;line-height:0;
+                        box-shadow:0 8px 24px rgba(0,0,0,0.12);margin-bottom:16px;">
                 {logo_html}
             </div>
-            <div style="font-size:11px;color:#8a95b0;text-transform:uppercase;
-                        letter-spacing:2px;margin-top:4px;margin-bottom:4px;">Inteligência Comercial</div>
+            <div style="font-size:28px;font-weight:700;color:#1d1d1f;letter-spacing:-0.02em;line-height:1.15;">Comercial De Nigris</div>
+            <div style="font-size:15px;color:#86868b;margin-top:6px;">Inteligência Comercial</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -2339,24 +2273,39 @@ topbar_html = (
 )
 st.markdown(topbar_html, unsafe_allow_html=True)
 
-# ── BOTTOM NAV ──
-nav_html = '<div class="bottom-nav">'
-for pid, picon, plabel in PAGINAS[:6]:  # max 6 ícones
-    active = "active" if pagina == pid else ""
-    nav_html += f'<div class="nav-item {active}" onclick="void(0)">{picon}<span>{plabel}</span></div>'
-nav_html += '</div>'
-# Usamos botões Streamlit reais para navegação
-nav_cols = st.columns(len(PAGINAS) + 1)
-for i, (pid, picon, plabel) in enumerate(PAGINAS):
-    with nav_cols[i]:
-        if st.button(f"{picon} {plabel}", key=f"nav_{pid}", use_container_width=True):
-            st.session_state.pagina = pid
-            st.rerun()
-with nav_cols[-1]:
-    if st.button("🚪 Sair", key="sair"):
-        st.session_state.user = None
-        _clear_query_params()
-        st.rerun()
+# ── NAVEGAÇÃO — controle segmentado (uma linha, rolável no celular, mostra a tela ativa) ──
+_NAV_IDS   = [p[0] for p in PAGINAS]
+_NAV_LABEL = {pid: f"{picon} {plabel}" for pid, picon, plabel in PAGINAS}
+
+def _ao_navegar():
+    _v = st.session_state.get("_nav_seg")
+    if _v:
+        st.session_state.pagina = _v
+
+def _sair():
+    st.session_state.user = None
+    st.session_state.pop("_nav_seg", None)
+    _clear_query_params()
+
+if st.session_state.get("_nav_seg") != pagina:
+    st.session_state["_nav_seg"] = pagina   # mantém o menu em sincronia quando a tela muda por um botão interno
+
+_nav_c1, _nav_c2 = st.columns([12, 1], vertical_alignment="center")
+with _nav_c1:
+    if hasattr(st, "segmented_control"):
+        st.segmented_control("Navegação", _NAV_IDS, format_func=lambda p: _NAV_LABEL.get(p, p),
+                             key="_nav_seg", on_change=_ao_navegar, label_visibility="collapsed")
+    else:  # Streamlit antigo: cai para botões
+        _cols = st.columns(len(PAGINAS))
+        for _i, (pid, picon, plabel) in enumerate(PAGINAS):
+            with _cols[_i]:
+                if st.button(f"{picon} {plabel}", key=f"nav_{pid}", use_container_width=True,
+                             type="primary" if pid == pagina else "secondary"):
+                    st.session_state.pagina = pid
+                    st.rerun()
+with _nav_c2:
+    with st.container(key="btn_sair"):
+        st.button("Sair", key="sair", on_click=_sair, type="secondary", help="Encerrar sessão")
 
 # ════════════════════════════════════════════════════════════════
 # CONTEÚDO
@@ -2664,13 +2613,13 @@ if pagina == "busca":
                     st.markdown(f"""
                     <a href="mailto:{email_cart}?subject=Proposta Comercial - Comercial De Nigris&body={msg_wa}" class="contact-btn btn-email" style="display:flex;flex-direction:row;align-items:center;gap:10px;padding:12px 16px;border-radius:14px;margin-bottom:10px;">
                         <span style="font-size:22px;">✉️</span>
-                        <div><div style="font-weight:700;font-size:13px;">{email_cart}</div><div style="font-size:10px;color:#8a95b0;">E-mail · Carteira</div></div>
+                        <div><div style="font-weight:700;font-size:13px;">{email_cart}</div><div style="font-size:10px;color:#86868b;">E-mail · Carteira</div></div>
                     </a>""", unsafe_allow_html=True)
             if email_emp and email_emp != "—" and email_emp != email_cart:
                 st.markdown(f"""
                 <a href="mailto:{email_emp}?subject=Proposta Comercial - Comercial De Nigris&body={msg_wa}" class="contact-btn btn-email" style="display:flex;flex-direction:row;align-items:center;gap:10px;padding:12px 16px;border-radius:14px;margin-bottom:10px;">
                     <span style="font-size:22px;">✉️</span>
-                    <div><div style="font-weight:700;font-size:13px;">{email_emp}</div><div style="font-size:10px;color:#8a95b0;">E-mail · Emplacamento</div></div>
+                    <div><div style="font-weight:700;font-size:13px;">{email_emp}</div><div style="font-size:10px;color:#86868b;">E-mail · Emplacamento</div></div>
                 </a>""", unsafe_allow_html=True)
 
             # Botões de telefone/WhatsApp
@@ -2711,10 +2660,10 @@ if pagina == "busca":
             st.markdown('<div class="info-card">', unsafe_allow_html=True)
             for m in marcas:
                 cnt = len(edf[edf["Marca"]==m])
-                st.markdown(f'<div class="info-row"><div class="info-label">Marca</div><div class="info-value"><strong>{m}</strong> <span style="color:#8a95b0;">({cnt}x)</span></div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="info-row"><div class="info-label">Marca</div><div class="info-value"><strong>{m}</strong> <span style="color:#86868b;">({cnt}x)</span></div></div>', unsafe_allow_html=True)
             for mod in modelos:
                 cnt = len(edf[edf["Modelo"]==mod])
-                st.markdown(f'<div class="info-row"><div class="info-label">Modelo</div><div class="info-value">{mod} <span style="color:#8a95b0;">({cnt}x)</span></div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="info-row"><div class="info-label">Modelo</div><div class="info-value">{mod} <span style="color:#86868b;">({cnt}x)</span></div></div>', unsafe_allow_html=True)
             for conc in concs:
                 icon = "✅" if any(n in conc.upper() for n in NOMES_DENIGRIS) else "⚠️"
                 st.markdown(f'<div class="info-row"><div class="info-label">Concessionária</div><div class="info-value">{icon} {conc[:50]}</div></div>', unsafe_allow_html=True)
@@ -2764,19 +2713,19 @@ if pagina == "busca":
             # ── Gráfico por ano ──
             hist = edf.groupby("Ano").size().reset_index(name="Qtd")
             hist["Ano"] = hist["Ano"].astype(str)
-            cores = ["#c8a84b" if str(a)==str(hist["Ano"].max()) else "#0a1628" for a in hist["Ano"]]
+            cores = ["#0071e3" if str(a)==str(hist["Ano"].max()) else "#1d1d1f" for a in hist["Ano"]]
             fig = go.Figure(go.Bar(
                 x=hist["Ano"], y=hist["Qtd"],
                 marker_color=cores,
-                marker_line_color="#c8a84b", marker_line_width=1.5,
+                marker_line_color="#0071e3", marker_line_width=1.5,
                 text=hist["Qtd"], textposition="outside"
             ))
             fig.update_layout(
-                plot_bgcolor="#fff", paper_bgcolor="#fff", font_color="#4a5568",
+                plot_bgcolor="#fff", paper_bgcolor="#fff", font_color="#515154",
                 height=220, margin=dict(t=30,b=10,l=10,r=10),
                 xaxis=dict(showgrid=False, title=""),
                 yaxis=dict(showgrid=True, gridcolor="#f0f2f7", title="Qtd"),
-                title=dict(text="Emplacamentos por Ano", font=dict(size=13, color="#0a1628"), x=0)
+                title=dict(text="Emplacamentos por Ano", font=dict(size=13, color="#1d1d1f"), x=0)
             )
             st.plotly_chart(fig, use_container_width=True)
 
@@ -2852,7 +2801,7 @@ if pagina == "busca":
             with col_btn_rf:
                 btn_rf = st.button("🔎 Consultar Receita Federal", use_container_width=True, key="btn_receita")
             with col_info_rf:
-                st.markdown(f'<div style="padding:8px 12px;background:#f0f8ff;border-radius:8px;font-size:12px;color:#4a5568;">CNPJ: <strong>{cnpj_fmt}</strong> · {nome_rf}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="padding:8px 12px;background:#f0f8ff;border-radius:8px;font-size:12px;color:#515154;">CNPJ: <strong>{cnpj_fmt}</strong> · {nome_rf}</div>', unsafe_allow_html=True)
 
             if btn_rf:
                 if len(cnpj_rf) != 14:
@@ -2880,9 +2829,9 @@ if pagina == "busca":
                 <div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:20px;margin-bottom:16px;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
                     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;">
                         <div>
-                            <div style="font-size:15px;font-weight:700;color:#0a1628;">{p["razao"]}</div>
-                            {"<div style='font-size:12px;color:#8a95b0;margin-top:2px;'>"+p["fantasia"]+"</div>" if p["fantasia"] not in ["—",""] and p["fantasia"]!=p["razao"] else ""}
-                            <div style="font-size:11px;color:#8a95b0;margin-top:4px;font-family:monospace;">{cnpj_fmt}</div>
+                            <div style="font-size:15px;font-weight:700;color:#1d1d1f;">{p["razao"]}</div>
+                            {"<div style='font-size:12px;color:#86868b;margin-top:2px;'>"+p["fantasia"]+"</div>" if p["fantasia"] not in ["—",""] and p["fantasia"]!=p["razao"] else ""}
+                            <div style="font-size:11px;color:#86868b;margin-top:4px;font-family:monospace;">{cnpj_fmt}</div>
                         </div>
                         <div style="background:{cor_sit};color:#fff;padding:5px 14px;border-radius:20px;font-size:12px;font-weight:600;white-space:nowrap;">
                             ● {p["situacao"]}
@@ -2890,30 +2839,30 @@ if pagina == "busca":
                     </div>
                     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;font-size:12px;margin-bottom:12px;">
                         <div style="background:#f8fafc;padding:10px;border-radius:8px;">
-                            <div style="color:#8a95b0;font-size:10px;margin-bottom:3px;">DATA DE ABERTURA</div>
-                            <div style="font-weight:600;color:#0a1628;">{p["abertura"]}</div>
+                            <div style="color:#86868b;font-size:10px;margin-bottom:3px;">DATA DE ABERTURA</div>
+                            <div style="font-weight:600;color:#1d1d1f;">{p["abertura"]}</div>
                         </div>
                         <div style="background:#f8fafc;padding:10px;border-radius:8px;">
-                            <div style="color:#8a95b0;font-size:10px;margin-bottom:3px;">CAPITAL SOCIAL</div>
-                            <div style="font-weight:600;color:#0a1628;">{cap_fmt}</div>
+                            <div style="color:#86868b;font-size:10px;margin-bottom:3px;">CAPITAL SOCIAL</div>
+                            <div style="font-weight:600;color:#1d1d1f;">{cap_fmt}</div>
                         </div>
                         <div style="background:#f8fafc;padding:10px;border-radius:8px;">
-                            <div style="color:#8a95b0;font-size:10px;margin-bottom:3px;">PORTE</div>
-                            <div style="font-weight:600;color:#0a1628;">{p["porte"]}</div>
+                            <div style="color:#86868b;font-size:10px;margin-bottom:3px;">PORTE</div>
+                            <div style="font-weight:600;color:#1d1d1f;">{p["porte"]}</div>
                         </div>
                         <div style="background:#f8fafc;padding:10px;border-radius:8px;">
-                            <div style="color:#8a95b0;font-size:10px;margin-bottom:3px;">NATUREZA JURÍDICA</div>
-                            <div style="font-weight:600;color:#0a1628;">{p["nat_jur"]}</div>
+                            <div style="color:#86868b;font-size:10px;margin-bottom:3px;">NATUREZA JURÍDICA</div>
+                            <div style="font-weight:600;color:#1d1d1f;">{p["nat_jur"]}</div>
                         </div>
                         <div style="background:#f8fafc;padding:10px;border-radius:8px;grid-column:span 2;">
-                            <div style="color:#8a95b0;font-size:10px;margin-bottom:3px;">ATIVIDADE PRINCIPAL</div>
-                            <div style="font-weight:600;color:#0a1628;">{p["atividade"][:80]}</div>
+                            <div style="color:#86868b;font-size:10px;margin-bottom:3px;">ATIVIDADE PRINCIPAL</div>
+                            <div style="font-weight:600;color:#1d1d1f;">{p["atividade"][:80]}</div>
                         </div>
                     </div>
                     <div style="background:#f8fafc;padding:10px;border-radius:8px;font-size:12px;">
-                        <span style="color:#8a95b0;font-size:10px;">ENDEREÇO</span><br>
+                        <span style="color:#86868b;font-size:10px;">ENDEREÇO</span><br>
                         <strong>{p["end_rf"]}</strong>
-                        {"<br><span style='color:#8a95b0;'>"+p["cidade_rf"]+" — "+p["uf_rf"]+" · CEP "+p["cep_rf"]+"</span>" if p["cidade_rf"]!="—" else ""}
+                        {"<br><span style='color:#86868b;'>"+p["cidade_rf"]+" — "+p["uf_rf"]+" · CEP "+p["cep_rf"]+"</span>" if p["cidade_rf"]!="—" else ""}
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -2933,13 +2882,13 @@ if pagina == "busca":
                         col_s1, col_s2 = st.columns([3,1])
                         with col_s1:
                             st.markdown(f"""
-                            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-left:4px solid #c8a84b;
+                            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-left:4px solid #0071e3;
                                         border-radius:8px;padding:12px 16px;margin-bottom:8px;">
-                                <div style="font-weight:700;font-size:13px;color:#0a1628;">👤 {nome_s}</div>
-                                <div style="font-size:11px;color:#8a95b0;margin-top:3px;">
+                                <div style="font-weight:700;font-size:13px;color:#1d1d1f;">👤 {nome_s}</div>
+                                <div style="font-size:11px;color:#86868b;margin-top:3px;">
                                     {qual_s} · Desde {desde_s} · {pais_s}
                                 </div>
-                                <div style="font-size:11px;color:#4a5568;margin-top:3px;font-family:monospace;">{cpf_show}</div>
+                                <div style="font-size:11px;color:#515154;margin-top:3px;font-family:monospace;">{cpf_show}</div>
                             </div>
                             """, unsafe_allow_html=True)
                         with col_s2:
@@ -2960,7 +2909,7 @@ if pagina == "busca":
                         outras = st.session_state.get(f"outras_{i}_{cnpj_rf}")
                         if outras is not None:
                             if outras:
-                                st.markdown(f'<div style="font-size:11px;font-weight:600;color:#0a1628;padding:4px 0 2px 0;">Empresas vinculadas a <em>{nome_s.split()[0]}</em>:</div>', unsafe_allow_html=True)
+                                st.markdown(f'<div style="font-size:11px;font-weight:600;color:#1d1d1f;padding:4px 0 2px 0;">Empresas vinculadas a <em>{nome_s.split()[0]}</em>:</div>', unsafe_allow_html=True)
                                 for oe in outras[:10]:
                                     cnpj_oe = oe.get("cnpj","")
                                     nome_oe = oe.get("razao_social","—")
@@ -2969,7 +2918,7 @@ if pagina == "busca":
                                     st.markdown(f"""
                                     <div style="font-size:11px;padding:4px 8px;background:#fff;border:1px solid #e2e8f0;
                                                 border-radius:6px;margin-bottom:4px;display:flex;justify-content:space-between;">
-                                        <span><strong>{nome_oe}</strong> <span style="color:#8a95b0;font-family:monospace;">{cnpj_oe}</span></span>
+                                        <span><strong>{nome_oe}</strong> <span style="color:#86868b;font-family:monospace;">{cnpj_oe}</span></span>
                                         <span style="color:{cor_oe};font-weight:600;">{sit_oe}</span>
                                     </div>
                                     """, unsafe_allow_html=True)
@@ -2983,9 +2932,9 @@ if pagina == "busca":
 
             else:
                 st.markdown("""
-                <div style="text-align:center;padding:48px 20px;color:#8a95b0;">
+                <div style="text-align:center;padding:48px 20px;color:#86868b;">
                     <div style="font-size:48px;margin-bottom:16px;">🏢</div>
-                    <div style="font-size:15px;font-weight:600;color:#4a5568;margin-bottom:8px;">Dados da Receita Federal</div>
+                    <div style="font-size:15px;font-weight:600;color:#515154;margin-bottom:8px;">Dados da Receita Federal</div>
                     <div style="font-size:13px;">Clique em <strong>Consultar Receita Federal</strong> para buscar<br>
                     situação cadastral, sócios e dados públicos da empresa.</div>
                 </div>
@@ -3144,7 +3093,7 @@ elif pagina == "emplacamentos":
             <div class="quadrant-header">
                 <div>
                     <div class="quadrant-title">🔴 Carteira → Concorrência</div>
-                    <div style="font-size:11px;color:#8a95b0;margin-top:2px;">Da sua carteira que compraram da concorrência</div>
+                    <div style="font-size:11px;color:#86868b;margin-top:2px;">Da sua carteira que compraram da concorrência</div>
                 </div>
                 <div class="quadrant-count q-red">{len(q1_df["CNPJ_NORM"].unique()) if not q1_df.empty else 0}</div>
             </div>
@@ -3161,7 +3110,7 @@ elif pagina == "emplacamentos":
             <div class="quadrant-header">
                 <div>
                     <div class="quadrant-title">🟡 Área sem Cadastro</div>
-                    <div style="font-size:11px;color:#8a95b0;margin-top:2px;">Emplacaram na sua área, sem vínculo na carteira</div>
+                    <div style="font-size:11px;color:#86868b;margin-top:2px;">Emplacaram na sua área, sem vínculo na carteira</div>
                 </div>
                 <div class="quadrant-count q-yellow">{len(q2_df["CNPJ_NORM"].unique()) if not q2_df.empty else 0}</div>
             </div>
@@ -3179,7 +3128,7 @@ elif pagina == "emplacamentos":
             <div class="quadrant-header">
                 <div>
                     <div class="quadrant-title">🟢 Compraram na De Nigris</div>
-                    <div style="font-size:11px;color:#8a95b0;margin-top:2px;">Vendas realizadas pela Comercial De Nigris</div>
+                    <div style="font-size:11px;color:#86868b;margin-top:2px;">Vendas realizadas pela Comercial De Nigris</div>
                 </div>
                 <div class="quadrant-count q-green">{len(q3_df["CNPJ_NORM"].unique()) if not q3_df.empty else 0}</div>
             </div>
@@ -3196,7 +3145,7 @@ elif pagina == "emplacamentos":
             <div class="quadrant-header">
                 <div>
                     <div class="quadrant-title">🏆 Top 3 do Período</div>
-                    <div style="font-size:11px;color:#8a95b0;margin-top:2px;">Maiores compradores no mês/ano selecionado</div>
+                    <div style="font-size:11px;color:#86868b;margin-top:2px;">Maiores compradores no mês/ano selecionado</div>
                 </div>
                 <div class="quadrant-count q-blue">{len(top_hist)}</div>
             </div>
@@ -3209,8 +3158,8 @@ elif pagina == "emplacamentos":
             <div style="background:#f8f9fc;border-radius:12px;padding:10px 12px;margin-bottom:8px;display:flex;align-items:center;gap:10px;">
                 <span style="font-size:20px;">{medals[i]}</span>
                 <div style="flex:1;">
-                    <div style="font-size:12px;font-weight:800;color:#0a1628;">{str(row['NOMEPROPRIETARIO'])[:30]}{"..." if len(str(row['NOMEPROPRIETARIO']))>30 else ""}</div>
-                    <div style="font-size:10px;color:#8a95b0;">📍 {safe_str(row['NO_CIDADE'])} · <span style="color:{cor};font-weight:700;">{int(row['Total'])} caminhões</span></div>
+                    <div style="font-size:12px;font-weight:800;color:#1d1d1f;">{str(row['NOMEPROPRIETARIO'])[:30]}{"..." if len(str(row['NOMEPROPRIETARIO']))>30 else ""}</div>
+                    <div style="font-size:10px;color:#86868b;">📍 {safe_str(row['NO_CIDADE'])} · <span style="color:{cor};font-weight:700;">{int(row['Total'])} caminhões</span></div>
                 </div>
             </div>""", unsafe_allow_html=True)
 
@@ -3227,7 +3176,7 @@ elif pagina == "emplacamentos":
         )
     with col_info:
         st.markdown(
-            f'<div style="padding:8px 12px;background:#f0f8ff;border-radius:10px;font-size:12px;color:#4a5568;">'
+            f'<div style="padding:8px 12px;background:#f0f8ff;border-radius:10px;font-size:12px;color:#515154;">'
             f'Relatório com cabeçalho resumo, top 3 clientes históricos e lista completa '
             f'colorida por grupo (De Nigris / Concorrência / Sem carteira).</div>',
             unsafe_allow_html=True
@@ -3478,10 +3427,10 @@ elif pagina == "gestao":
     perf["% Nigris"] = (perf["Nigris"]/perf["Total"]*100).round(1).astype(str)+"%"
 
     fig_c = go.Figure()
-    fig_c.add_trace(go.Bar(name="De Nigris", x=perf["Consultor"], y=perf["Nigris"], marker_color="#0a1628"))
-    fig_c.add_trace(go.Bar(name="Concorrente", x=perf["Consultor"], y=perf["Conc"], marker_color="#c8a84b"))
+    fig_c.add_trace(go.Bar(name="De Nigris", x=perf["Consultor"], y=perf["Nigris"], marker_color="#0071e3"))
+    fig_c.add_trace(go.Bar(name="Concorrente", x=perf["Consultor"], y=perf["Conc"], marker_color="#c7c7cc"))
     fig_c.update_layout(barmode="stack", plot_bgcolor="#fff", paper_bgcolor="#fff",
-        font_color="#4a5568", height=300, legend=dict(font=dict(color="#4a5568")),
+        font_color="#515154", height=300, legend=dict(font=dict(color="#515154")),
         xaxis=dict(showgrid=False, tickangle=-30), yaxis=dict(showgrid=True, gridcolor="#f0f2f7"),
         margin=dict(t=10,b=10,l=10,r=10))
     st.plotly_chart(fig_c, use_container_width=True)
@@ -3503,7 +3452,7 @@ elif pagina == "gestao":
         st.caption(f"Top concessionárias concorrentes no período ({len(conc_concorrentes)} no total)")
         fig_conc = go.Figure(go.Bar(x=conc_concorrentes.head(10)["Total"], y=conc_concorrentes.head(10)["Concessionário"],
                                      orientation="h", marker_color="#c0392b"))
-        fig_conc.update_layout(plot_bgcolor="#fff", paper_bgcolor="#fff", font_color="#4a5568", height=320,
+        fig_conc.update_layout(plot_bgcolor="#fff", paper_bgcolor="#fff", font_color="#515154", height=320,
             xaxis=dict(showgrid=True, gridcolor="#f0f2f7"), yaxis=dict(autorange="reversed"),
             margin=dict(t=10,b=10,l=10,r=10))
         st.plotly_chart(fig_conc, use_container_width=True)
@@ -3519,8 +3468,8 @@ elif pagina == "gestao":
     mod_rank["Concorrente"] = mod_rank["Total"] - mod_rank["Nigris"]
     mc1, mc2 = st.columns([1.3, 1])
     with mc1:
-        fig_mod = go.Figure(go.Bar(x=mod_rank.head(12)["Modelo"], y=mod_rank.head(12)["Total"], marker_color="#0a1628"))
-        fig_mod.update_layout(plot_bgcolor="#fff", paper_bgcolor="#fff", font_color="#4a5568", height=300,
+        fig_mod = go.Figure(go.Bar(x=mod_rank.head(12)["Modelo"], y=mod_rank.head(12)["Total"], marker_color="#0071e3"))
+        fig_mod.update_layout(plot_bgcolor="#fff", paper_bgcolor="#fff", font_color="#515154", height=300,
             xaxis=dict(showgrid=False, tickangle=-30), yaxis=dict(showgrid=True, gridcolor="#f0f2f7"),
             margin=dict(t=10,b=10,l=10,r=10))
         st.plotly_chart(fig_mod, use_container_width=True)
@@ -3605,12 +3554,12 @@ elif pagina == "gestao":
         evol["Conc"] = evol["Total"] - evol["Nigris"]
         fig_e = go.Figure()
         fig_e.add_trace(go.Scatter(x=evol["AnoMes"], y=evol["Nigris"], name="De Nigris",
-            mode="lines+markers", line=dict(color="#0a1628",width=3), marker=dict(size=6),
+            mode="lines+markers", line=dict(color="#1d1d1f",width=3), marker=dict(size=6),
             fill="tozeroy", fillcolor="rgba(10,22,40,0.07)"))
         fig_e.add_trace(go.Scatter(x=evol["AnoMes"], y=evol["Conc"], name="Concorrente",
-            mode="lines+markers", line=dict(color="#c8a84b",width=2,dash="dot"), marker=dict(size=5)))
-        fig_e.update_layout(plot_bgcolor="#fff",paper_bgcolor="#fff",font_color="#4a5568",height=280,
-            legend=dict(font=dict(color="#4a5568")),
+            mode="lines+markers", line=dict(color="#0071e3",width=2,dash="dot"), marker=dict(size=5)))
+        fig_e.update_layout(plot_bgcolor="#fff",paper_bgcolor="#fff",font_color="#515154",height=280,
+            legend=dict(font=dict(color="#515154")),
             xaxis=dict(showgrid=False,tickangle=-45), yaxis=dict(showgrid=True,gridcolor="#f0f2f7"),
             margin=dict(t=10,b=10,l=10,r=10))
         st.plotly_chart(fig_e, use_container_width=True)
@@ -4345,8 +4294,8 @@ elif pagina == "admin":
 
         eu1, eu2 = st.columns(2)
         with eu1:
-            new_login  = st.text_input("Login (maiúsculas)", placeholder="EX: RENATA").strip().upper()
-            new_nome   = st.text_input("Nome completo", placeholder="Renata Bellon")
+            new_login  = st.text_input("Login (maiúsculas)", placeholder="EX: JOAO").strip().upper()
+            new_nome   = st.text_input("Nome completo", placeholder="João da Silva")
             new_perfil = st.selectbox("Perfil", ["vendedor","gerente","gestor"])
 
             if new_perfil == "vendedor":
@@ -4372,7 +4321,7 @@ elif pagina == "admin":
                             st.markdown(f'<div style="font-size:12px;padding:6px 10px;border-radius:8px;background:{"#e8f8ee" if na_cart else "#fff4e0"};color:{"#007030" if na_cart else "#a05000"};">{"✅" if na_cart else "⚠️"} Carteira</div>', unsafe_allow_html=True)
                 else:
                     st.warning("⚠️ Carregue os dados primeiro para ver a lista de consultores.")
-                    new_cons_key = st.text_input("Ou digite manualmente:", placeholder="EX: RENATA BELLON").strip().upper()
+                    new_cons_key = st.text_input("Ou digite manualmente:", placeholder="EX: JOAO DA SILVA").strip().upper()
             else:
                 new_cons_key = ""
 
@@ -4385,10 +4334,10 @@ elif pagina == "admin":
                 cnt_cart = len(df_cart[df_cart["VENDEDOR"].str.upper() == new_cons_key.upper()]) if df_cart is not None else 0
                 st.markdown(f"""
                 <div style="background:#f8f9fc;border:1.5px solid #e0e4ee;border-radius:12px;padding:14px;margin-top:8px;">
-                    <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#8a95b0;margin-bottom:8px;">Preview do Acesso</div>
-                    <div style="font-size:13px;font-weight:700;color:#0a1628;">👤 {new_login}</div>
-                    <div style="font-size:12px;color:#4a5568;margin-top:4px;">🗂️ Consultor: <strong>{new_cons_key}</strong></div>
-                    <div style="font-size:12px;color:#4a5568;margin-top:2px;">📋 Clientes na carteira: <strong>{cnt_cart}</strong></div>
+                    <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#86868b;margin-bottom:8px;">Preview do Acesso</div>
+                    <div style="font-size:13px;font-weight:700;color:#1d1d1f;">👤 {new_login}</div>
+                    <div style="font-size:12px;color:#515154;margin-top:4px;">🗂️ Consultor: <strong>{new_cons_key}</strong></div>
+                    <div style="font-size:12px;color:#515154;margin-top:2px;">📋 Clientes na carteira: <strong>{cnt_cart}</strong></div>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -4966,18 +4915,18 @@ function (row) {
   var marker = L.marker(new L.LatLng(row[0], row[1]), {icon: icon});
   var selo = row[9] ? '📍 Endereço exato' : '🏙️ Aproximado (centro da cidade)';
   var h = '<div style="width:250px;font-family:Segoe UI,sans-serif;">'
-    + '<div style="font-size:13px;font-weight:700;color:#0a1628;margin-bottom:3px;">' + row[2] + '</div>'
-    + '<div style="font-size:10px;color:#8a95b0;font-family:monospace;margin-bottom:5px;">' + row[3] + '</div>'
+    + '<div style="font-size:13px;font-weight:700;color:#1d1d1f;margin-bottom:3px;">' + row[2] + '</div>'
+    + '<div style="font-size:10px;color:#86868b;font-family:monospace;margin-bottom:5px;">' + row[3] + '</div>'
     + '<span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;margin-bottom:7px;background:#C0392B22;color:#C0392B;">⚠️ Não Cadastrado</span>'
-    + '<div style="font-size:11px;color:#4a5568;margin-bottom:2px;">📍 <b>Endereço:</b> ' + row[6] + '</div>'
-    + '<div style="font-size:11px;color:#4a5568;margin-bottom:2px;">🏙️ <b>Cidade:</b> ' + row[5] + '</div>'
-    + '<div style="font-size:11px;color:#4a5568;margin-bottom:2px;">🚚 <b>Últ. Modelo:</b> ' + row[7] + '</div>'
-    + '<div style="font-size:11px;color:#4a5568;margin-bottom:6px;">📦 <b>Emplacamentos:</b> ' + vol + '</div>'
-    + '<div style="font-size:10px;color:#8a95b0;margin-bottom:8px;">' + selo + '</div>'
+    + '<div style="font-size:11px;color:#515154;margin-bottom:2px;">📍 <b>Endereço:</b> ' + row[6] + '</div>'
+    + '<div style="font-size:11px;color:#515154;margin-bottom:2px;">🏙️ <b>Cidade:</b> ' + row[5] + '</div>'
+    + '<div style="font-size:11px;color:#515154;margin-bottom:2px;">🚚 <b>Últ. Modelo:</b> ' + row[7] + '</div>'
+    + '<div style="font-size:11px;color:#515154;margin-bottom:6px;">📦 <b>Emplacamentos:</b> ' + vol + '</div>'
+    + '<div style="font-size:10px;color:#86868b;margin-bottom:8px;">' + selo + '</div>'
     + '<div style="display:flex;gap:5px;margin-bottom:5px;">'
     + '<a href="' + row[10] + '" target="_blank" style="flex:1;padding:8px 4px;background:#e8f0ff;color:#1a73e8;border-radius:6px;text-align:center;font-size:12px;font-weight:700;text-decoration:none;">🗺️ Google Maps</a>'
     + '<a href="' + row[11] + '" target="_blank" style="flex:1;padding:8px 4px;background:#f0eaff;color:#7c3aed;border-radius:6px;text-align:center;font-size:12px;font-weight:700;text-decoration:none;">🚗 Waze</a>'
-    + '</div><div style="font-size:10px;color:#8a95b0;text-align:center;">CNPJ para busca: <b>' + row[4] + '</b></div></div>';
+    + '</div><div style="font-size:10px;color:#86868b;text-align:center;">CNPJ para busca: <b>' + row[4] + '</b></div></div>';
   marker.bindPopup(h, {maxWidth: 270});
   marker.bindTooltip(row[2] + ' · ' + vol + ' empl.');
   return marker;
