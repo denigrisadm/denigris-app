@@ -1773,21 +1773,25 @@ def calcular_responsaveis(df_emp, df_area, df_cart, mun, norm_fn, zona_livre="ZO
     faixas.sort()
 
     def por_faixa(cep):
+        """Todos os vendedores cuja faixa cobre o CEP (2+ = território compartilhado, ex.: Guarulhos)."""
         if cep is None:
             return None
+        achados = []
         for ini, fim, cons in faixas:
-            if ini <= cep <= fim:
-                return cons
             if ini > cep:
                 break
-        return None
+            if ini <= cep <= fim and cons not in achados:
+                achados.append(cons)
+        return tuple(sorted(achados)) or None
 
     def mais_proximo(coord, cep):
+        """Vendedor(es) mais perto; empate no mesmo território (ex.: Guarulhos) = os dois."""
         if coord is not None and pontos:
-            return min(pontos, key=lambda t: (_dist_km(coord, t[0]),
-                                              abs((cep or t[2]) - (t[2] + t[3]) // 2)))[1]
+            dists = [(_dist_km(coord, t[0]), t[1]) for t in pontos]
+            dmin = min(d for d, _ in dists)
+            return tuple(sorted({v for d, v in dists if d <= dmin + 0.05}))
         if cep is not None and faixas:   # sem coordenada: CEP numericamente mais próximo
-            return min(faixas, key=lambda t: 0 if t[0] <= cep <= t[1] else min(abs(cep - t[0]), abs(cep - t[1])))[2]
+            return (min(faixas, key=lambda t: 0 if t[0] <= cep <= t[1] else min(abs(cep - t[0]), abs(cep - t[1])))[2],)
         return None
 
     # 2. Dono pela Carteira
@@ -1810,7 +1814,7 @@ def calcular_responsaveis(df_emp, df_area, df_cart, mun, norm_fn, zona_livre="ZO
     for r in ult.itertuples(index=False):
         k = r.chave_cli
         if k in cart:
-            decisao[k], origem[k] = cart[k], "Carteira"; continue
+            decisao[k], origem[k] = (cart[k],), "Carteira"; continue   # carteira: sempre exclusivo
         cep = ult_cep.get(k)
         cep = int(cep) if cep is not None and cep == cep else None
         v = por_faixa(cep)
@@ -1820,12 +1824,14 @@ def calcular_responsaveis(df_emp, df_area, df_cart, mun, norm_fn, zona_livre="ZO
         v = mais_proximo(coord, cep) or fallback_geral
         decisao[k], origem[k] = v, "Mais próximo"
 
-    resp = chave.map(decisao)
+    resp = chave.map({k: v[0] for k, v in decisao.items()})                 # responsável principal
+    resp_all = chave.map({k: "|" + "|".join(v) + "|" for k, v in decisao.items()})   # todos que podem ver
     orig = chave.map(origem)
     resumo = {"clientes": len(decisao),
               "por_origem": pd.Series(origem).value_counts().to_dict(),
-              "sem_responsavel": int(resp.isna().sum())}
-    return resp, orig, resumo
+              "sem_responsavel": int(resp.isna().sum()),
+              "compartilhados": sum(1 for v in decisao.values() if len(v) > 1)}
+    return resp, orig, resumo, resp_all
 
 
 @st.cache_resource(show_spinner=False, max_entries=4)
@@ -1840,12 +1846,14 @@ def aplicar_responsaveis(df_emp, df_area, df_cart):
         _ch = (len(df_emp), str(df_emp["Data emplacamento"].max()), str(df_emp["Chassi"].iloc[-1]),
                tuple(map(tuple, df_area[["Consultor", "CEP_ini_norm", "CEP_fim_norm"]].astype(str).values.tolist())),
                int(pd.util.hash_pandas_object(df_cart[["CNPJ_NORM", "VENDEDOR"]].astype(str), index=False).sum()) if df_cart is not None else 0)
-        resp, orig, _res = _responsaveis_cache(_ch, df_emp, df_area, df_cart)
+        resp, orig, _res, resp_all = _responsaveis_cache(_ch, df_emp, df_area, df_cart)
         out = df_emp.copy(deep=False)
         out["RESP_KEY"] = resp.values
+        out["RESP_KEYS"] = resp_all.values
         out["RESP_ORIGEM"] = orig.values
         _m = out.dropna(subset=["RESP_KEY"])
-        st.session_state["_resp_map"] = dict(zip(_m["CNPJ_NORM"], _m["RESP_KEY"]))
+        _disp = _m["RESP_KEYS"].str.strip("|").str.replace("|", " / ", regex=False)
+        st.session_state["_resp_map"] = dict(zip(_m["CNPJ_NORM"], _disp))
         st.session_state["_resp_origem"] = dict(zip(_m["CNPJ_NORM"], _m["RESP_ORIGEM"]))
         return out
     except Exception as _e:
@@ -1898,8 +1906,9 @@ def emp_da_area(df_emp, cidades_reais, cep_ranges, consultor=None):
     """
     if df_emp is None or df_emp.empty: return pd.DataFrame()
     # Responsável único: o cliente aparece só para o vendedor dono dele (nunca para dois)
-    if consultor and "RESP_KEY" in df_emp.columns:
-        return df_emp[df_emp["RESP_KEY"] == norm_str(consultor)].copy()
+    if consultor and "RESP_KEYS" in df_emp.columns:
+        _alvo = "|" + norm_str(consultor) + "|"
+        return df_emp[df_emp["RESP_KEYS"].fillna("").str.contains(_alvo, regex=False)].copy()
 
     # ── 1. Filtro por CEP (faixas da área operacional) ──
     mask_cep = pd.Series(False, index=df_emp.index)
@@ -3683,10 +3692,17 @@ elif pagina == "gestao":
         df_g["_vend_key"] = df_g["CNPJ_NORM"].map(cnpj_to_vendkey_g)
         df_g["_vend_key"] = df_g["_vend_key"].fillna(df_g["NO_CIDADE_NORM"].map(mc_gx))
     df_g["Consultor"] = df_g["_vend_key"].map(label_by_key_g).fillna("Sem consultor definido")
+    if "RESP_KEYS" in df_g.columns:   # território compartilhado: mostra os dois nomes
+        _lbl_multi = df_g["RESP_KEYS"].fillna("").str.strip("|").str.split("|").map(
+            lambda ks: " / ".join(label_by_key_g.get(k, k.title()) for k in ks if k))
+        df_g["Consultor"] = _lbl_multi.where(_lbl_multi != "", df_g["Consultor"])
 
     if cons_s_g_lbl != "Todos":
         cons_s_g_key = map_g_lbl_to_key[cons_s_g_lbl]
-        df_g = df_g[df_g["_vend_key"] == cons_s_g_key]
+        if "RESP_KEYS" in df_g.columns:
+            df_g = df_g[df_g["RESP_KEYS"].fillna("").str.contains("|" + cons_s_g_key + "|", regex=False)]
+        else:
+            df_g = df_g[df_g["_vend_key"] == cons_s_g_key]
         if df_g.empty:
             st.warning(f"Sem emplacamentos de {cons_s_g_lbl} no período/cidade selecionados.")
             st.stop()
@@ -3707,7 +3723,13 @@ elif pagina == "gestao":
 
     # ── Por Consultor ──
     st.markdown('<div class="sec-title">👥 Por Consultor</div>', unsafe_allow_html=True)
-    perf = df_g.groupby("Consultor").agg(
+    # cada vendedor de um território compartilhado conta o emplacamento no seu gráfico
+    if "RESP_KEYS" in df_g.columns:
+        _df_perf = df_g.assign(_k=df_g["RESP_KEYS"].fillna("").str.strip("|").str.split("|")).explode("_k")
+        _df_perf["Consultor"] = _df_perf["_k"].map(label_by_key_g).fillna(_df_perf["Consultor"])
+    else:
+        _df_perf = df_g
+    perf = _df_perf.groupby("Consultor").agg(
         Total=("Chassi","count"),
         Nigris=("Concessionário", lambda x: is_denigris(x).sum()),
         Conc=("Concessionário", lambda x: (~is_denigris(x)).sum()),
