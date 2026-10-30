@@ -1075,7 +1075,7 @@ def buscar_cliente_contexto_ia(pergunta, df_emp, df_cart, df_area):
         cep_c = norm_cep(last.get("NU_CEP", ""))
         cid_c = norm_str(str(last.get("NO_CIDADE", "")))
         bai_c = norm_str(str(last.get("NO_BAIRRO", "")))
-        vendedor_resp = get_consultor(cep_c, cid_c, bai_c, df_area)
+        vendedor_resp = get_consultor(cep_c, cid_c, bai_c, df_area, cnpj=last.get("CNPJ_NORM"))
 
     ctx = (
         f"\nCONTEXTO ESPECÍFICO DO CLIENTE MENCIONADO (dados reais da base De Nigris):\n"
@@ -1576,10 +1576,182 @@ def merge_emp(dfs):
     m.sort_values("Data emplacamento", inplace=True)
     return m
 
-def get_consultor(cep_norm, cidade_norm, bairro_norm, df_area):
+
+# ════════════════════════════════════════════════════════════════
+# RESPONSÁVEL ÚNICO POR CLIENTE (Carteira → Faixa de CEP → Vendedor mais próximo)
+# ════════════════════════════════════════════════════════════════
+import math
+MUN_COORDS = {"ADAMANTINA|SP":[-21.682,-51.074],"ADOLFO|SP":[-21.233,-49.645],"AGUAI|SP":[-22.057,-46.974],"AGUAS DA PRATA|SP":[-21.932,-46.718],"AGUAS DE LINDOIA|SP":[-22.473,-46.631],"AGUAS DE SANTA BARBARA|SP":[-22.881,-49.242],"AGUAS DE SAO PEDRO|SP":[-22.598,-47.873],"AGUDOS|SP":[-22.469,-48.986],"ALAMBARI|SP":[-23.55,-47.898],"ALFREDO MARCONDES|SP":[-21.953,-51.414],"ALTAIR|SP":[-20.524,-49.057],"ALTINOPOLIS|SP":[-21.021,-47.371],"ALTO ALEGRE|SP":[-21.581,-50.168],"ALUMINIO|SP":[-23.531,-47.255],"ALVARES FLORENCE|SP":[-20.32,-49.914],"ALVARES MACHADO|SP":[-22.076,-51.472],"ALVARO DE CARVALHO|SP":[-22.084,-49.719],"ALVINLANDIA|SP":[-22.444,-49.762],"AMERICANA|SP":[-22.737,-47.333],"AMERICO BRASILIENSE|SP":[-21.729,-48.115],"AMERICO DE CAMPOS|SP":[-20.299,-49.736],"AMPARO|SP":[-22.709,-46.772],"ANALANDIA|SP":[-22.129,-47.662],"ANDRADINA|SP":[-20.895,-51.379],"ANGATUBA|SP":[-23.492,-48.414],"ANHEMBI|SP":[-22.793,-48.134],"ANHUMAS|SP":[-22.293,-51.389],"APARECIDA|SP":[-22.849,-45.233],"APARECIDA D'OESTE|SP":[-20.449,-50.883],"APIAI|SP":[-24.511,-48.844],"ARACAJU|SE":[-10.909,-37.068],"ARACARIGUAMA|SP":[-23.437,-47.061],"ARACATUBA|SP":[-21.208,-50.44],"ARACOIABA DA SERRA|SP":[-23.503,-47.617],"ARAGOIANIA|GO":[-16.909,-49.448],"ARAMINA|SP":[-20.088,-47.787],"ARANDU|SP":[-23.139,-49.049],"ARAPEI|SP":[-22.672,-44.444],"ARARAQUARA|SP":[-21.785,-48.178],"ARARAS|SP":[-22.357,-47.384],"ARAUCARIA|PR":[-25.586,-49.405],"ARCO IRIS|SP":[-21.773,-50.466],"AREALVA|SP":[-22.031,-48.913],"AREIAS|SP":[-22.579,-44.699],"AREIOPOLIS|SP":[-22.667,-48.668],"ARIRANHA|SP":[-21.187,-48.79],"ARTUR NOGUEIRA|SP":[-22.573,-47.173],"ARUJA|SP":[-23.396,-46.32],"ASPASIA|SP":[-20.16,-50.728],"ASSIS|SP":[-22.66,-50.418],"ATIBAIA|SP":[-23.117,-46.556],"AURIFLAMA|SP":[-20.684,-50.557],"AVAI|SP":[-22.151,-49.336],"AVANHANDAVA|SP":[-21.458,-49.951],"AVARE|SP":[-23.107,-48.925],"BADY BASSITT|SP":[-20.92,-49.438],"BAIXO GUANDU|ES":[-19.521,-41.011],"BALBINOS|SP":[-21.896,-49.362],"BALSAMO|SP":[-20.735,-49.587],"BANANAL|SP":[-22.682,-44.328],"BARAO DE ANTONINA|SP":[-23.628,-49.563],"BARBOSA|SP":[-21.266,-49.952],"BARIRI|SP":[-22.073,-48.744],"BARRA BONITA|SP":[-22.491,-48.558],"BARRA DO CHAPEU|SP":[-24.472,-49.024],"BARRA DO TURVO|SP":[-24.759,-48.501],"BARRETOS|SP":[-20.553,-48.57],"BARRINHA|SP":[-21.186,-48.164],"BARUERI|SP":[-23.506,-46.879],"BASTOS|SP":[-21.921,-50.736],"BATATAIS|SP":[-20.893,-47.592],"BAURU|SP":[-22.325,-49.087],"BEBEDOURO|SP":[-20.949,-48.479],"BELEM|PA":[-1.455,-48.49],"BELO HORIZONTE|MG":[-19.91,-43.927],"BENTO DE ABREU|SP":[-21.269,-50.814],"BERNARDINO DE CAMPOS|SP":[-23.016,-49.468],"BERTIOGA|SP":[-23.849,-46.14],"BICAS|MG":[-21.723,-43.056],"BILAC|SP":[-21.404,-50.475],"BIRIGUI|SP":[-21.291,-50.343],"BIRITIBA MIRIM|SP":[-23.57,-46.041],"BOA ESPERANCA DO SUL|SP":[-21.992,-48.391],"BOA VISTA|RR":[2.824,-60.675],"BOCAINA|SP":[-22.137,-48.523],"BOFETE|SP":[-23.105,-48.258],"BOITUVA|SP":[-23.285,-47.679],"BOM JESUS DOS PERDOES|SP":[-23.136,-46.468],"BOM SUCESSO DE ITARARE|SP":[-24.316,-49.145],"BORA|SP":[-22.27,-50.541],"BORACEIA|SP":[-22.193,-48.781],"BORBOREMA|SP":[-21.621,-49.074],"BOREBI|SP":[-22.573,-48.971],"BOTUCATU|SP":[-22.884,-48.444],"BRACO DO NORTE|SC":[-28.268,-49.17],"BRAGANCA PAULISTA|SP":[-22.953,-46.542],"BRASILIA|DF":[-15.78,-47.93],"BRAUNA|SP":[-21.499,-50.318],"BREJO ALEGRE|SP":[-21.165,-50.186],"BRODOWSKI|SP":[-20.985,-47.657],"BROTAS|SP":[-22.279,-48.125],"BURI|SP":[-23.798,-48.596],"BURITAMA|SP":[-21.066,-50.148],"BURITIZAL|SP":[-20.191,-47.71],"CABRALIA PAULISTA|SP":[-22.458,-49.339],"CABREUVA|SP":[-23.305,-47.136],"CACAPAVA|SP":[-23.099,-45.708],"CACHOEIRA ALTA|GO":[-18.762,-50.943],"CACHOEIRA PAULISTA|SP":[-22.666,-45.015],"CACONDE|SP":[-21.528,-46.644],"CAFELANDIA|SP":[-21.803,-49.609],"CAIABU|SP":[-22.013,-51.239],"CAIEIRAS|SP":[-23.361,-46.74],"CAIUA|SP":[-21.832,-51.997],"CAJAMAR|SP":[-23.355,-46.878],"CAJATI|SP":[-24.732,-48.122],"CAJOBI|SP":[-20.877,-48.806],"CAJURU|SP":[-21.275,-47.303],"CAMPINA DO MONTE ALEGRE|SP":[-23.59,-48.476],"CAMPINAS|SP":[-22.905,-47.066],"CAMPO GRANDE|MS":[-20.449,-54.63],"CAMPO LIMPO PAULISTA|SP":[-23.208,-46.789],"CAMPO MOURAO|PR":[-24.046,-52.378],"CAMPOS DO JORDAO|SP":[-22.73,-45.583],"CAMPOS NOVOS PAULISTA|SP":[-22.602,-49.999],"CANANEIA|SP":[-25.014,-47.934],"CANAS|SP":[-22.7,-45.052],"CANDIDO MOTA|SP":[-22.747,-50.387],"CANDIDO RODRIGUES|SP":[-21.328,-48.633],"CANITAR|SP":[-23.004,-49.784],"CAPAO BONITO|SP":[-24.011,-48.348],"CAPELA DO ALTO|SP":[-23.468,-47.739],"CAPIVARI|SP":[-22.995,-47.507],"CARAGUATATUBA|SP":[-23.613,-45.413],"CARAPICUIBA|SP":[-23.523,-46.841],"CARAUBAS|PB":[-7.72,-36.492],"CARDOSO|SP":[-20.08,-49.918],"CASA BRANCA|SP":[-21.771,-47.085],"CASSIA DOS COQUEIROS|SP":[-21.28,-47.164],"CASTILHO|SP":[-20.869,-51.488],"CASTRO|PR":[-24.789,-50.011],"CATANDUVA|SP":[-21.131,-48.977],"CATIGUA|SP":[-21.052,-49.062],"CAUCAIA|CE":[-3.728,-38.662],"CEDRAL|SP":[-20.901,-49.266],"CERQUEIRA CESAR|SP":[-23.038,-49.166],"CERQUILHO|SP":[-23.166,-47.746],"CESARIO LANGE|SP":[-23.226,-47.955],"CHARQUEADA|SP":[-22.51,-47.776],"CHAVANTES|SP":[-23.037,-49.71],"CLEMENTINA|SP":[-21.56,-50.453],"COLINA|SP":[-20.711,-48.539],"COLOMBIA|SP":[-20.177,-48.687],"CONCHAL|SP":[-22.337,-47.173],"CONCHAS|SP":[-23.015,-48.013],"CORDEIROPOLIS|SP":[-22.478,-47.452],"COROADOS|SP":[-21.352,-50.286],"CORONEL MACEDO|SP":[-23.626,-49.31],"CORUMBATAI|SP":[-22.221,-47.621],"COSMOPOLIS|SP":[-22.642,-47.193],"COSMORAMA|SP":[-20.476,-49.783],"COTIA|SP":[-23.602,-46.919],"CRATO|CE":[-7.215,-39.41],"CRAVINHOS|SP":[-21.338,-47.732],"CRISTAIS PAULISTA|SP":[-20.404,-47.421],"CRUZALIA|SP":[-22.737,-50.791],"CRUZEIRO|SP":[-22.573,-44.969],"CUBATAO|SP":[-23.891,-46.424],"CUIABA|MT":[-15.601,-56.097],"CUNHA|SP":[-23.073,-44.958],"CURITIBA|PR":[-25.419,-49.265],"DESCALVADO|SP":[-21.9,-47.618],"DIADEMA|SP":[-23.681,-46.62],"DIRCE REIS|SP":[-20.464,-50.607],"DIVINOLANDIA|SP":[-21.664,-46.736],"DOBRADA|SP":[-21.515,-48.394],"DOIS CORREGOS|SP":[-22.367,-48.382],"DOLCINOPOLIS|SP":[-20.124,-50.515],"DOURADO|SP":[-22.104,-48.318],"DRACENA|SP":[-21.484,-51.535],"DUARTINA|SP":[-22.415,-49.408],"DUMONT|SP":[-21.232,-47.976],"ECHAPORA|SP":[-22.433,-50.204],"ELDORADO|SP":[-24.528,-48.114],"ELIAS FAUSTO|SP":[-23.043,-47.368],"ELISIARIO|SP":[-21.168,-49.115],"EMBAUBA|SP":[-20.98,-48.833],"EMBU DAS ARTES|SP":[-23.644,-46.858],"EMBU GUACU|SP":[-23.83,-46.814],"EMILIANOPOLIS|SP":[-21.831,-51.483],"ENGENHEIRO COELHO|SP":[-22.484,-47.211],"EPITACIOLANDIA|AC":[-11.019,-68.734],"ESMERALDAS|MG":[-19.764,-44.306],"ESPIRITO SANTO DO PINHAL|SP":[-22.191,-46.748],"ESPIRITO SANTO DO TURVO|SP":[-22.692,-49.434],"ESTEIO|RS":[-29.852,-51.184],"ESTIVA GERBI|SP":[-22.271,-46.948],"ESTRELA D'OESTE|SP":[-20.288,-50.405],"ESTRELA DO NORTE|SP":[-22.486,-51.663],"EUCLIDES DA CUNHA PAULISTA|SP":[-22.555,-52.593],"EXTREMA|MG":[-22.854,-46.318],"FARTURA|SP":[-23.392,-49.512],"FERNANDO PRESTES|SP":[-21.266,-48.687],"FERNANDOPOLIS|SP":[-20.281,-50.247],"FERNAO|SP":[-22.361,-49.519],"FERRAZ DE VASCONCELOS|SP":[-23.541,-46.371],"FLORA RICA|SP":[-21.673,-51.382],"FLOREAL|SP":[-20.675,-50.151],"FLORIANOPOLIS|SC":[-27.595,-48.548],"FLORIDA PAULISTA|SP":[-21.613,-51.172],"FLORINIA|SP":[-22.868,-50.681],"FORTALEZA|CE":[-3.717,-38.542],"FRANCA|SP":[-20.535,-47.404],"FRANCISCO BELTRAO|PR":[-26.082,-53.053],"FRANCISCO MORATO|SP":[-23.279,-46.745],"FRANCO DA ROCHA|SP":[-23.323,-46.729],"GABRIEL MONTEIRO|SP":[-21.529,-50.557],"GALIA|SP":[-22.292,-49.55],"GARCA|SP":[-22.212,-49.655],"GASTAO VIDIGAL|SP":[-20.795,-50.191],"GAVIAO PEIXOTO|SP":[-21.837,-48.496],"GENERAL SALGADO|SP":[-20.648,-50.364],"GETULINA|SP":[-21.796,-49.931],"GLICERIO|SP":[-21.381,-50.212],"GOIANIA|GO":[-16.686,-49.264],"GRAVATAI|RS":[-29.941,-50.987],"GUAIBA|RS":[-30.109,-51.323],"GUAICARA|SP":[-21.619,-49.801],"GUAIMBE|SP":[-21.909,-49.899],"GUAIRA|SP":[-20.32,-48.312],"GUAPIACU|SP":[-20.796,-49.217],"GUAPIARA|SP":[-24.189,-48.529],"GUARA|SP":[-20.43,-47.824],"GUARACAI|SP":[-21.029,-51.212],"GUARACI|SP":[-20.498,-48.939],"GUARANI D'OESTE|SP":[-20.075,-50.341],"GUARANTA|SP":[-21.894,-49.591],"GUARARAPES|SP":[-21.254,-50.645],"GUARAREMA|SP":[-23.411,-46.037],"GUARATINGUETA|SP":[-22.808,-45.194],"GUAREI|SP":[-23.371,-48.184],"GUARIBA|SP":[-21.359,-48.232],"GUARUJA|SP":[-23.989,-46.258],"GUARULHOS|SP":[-23.454,-46.533],"GUATAPARA|SP":[-21.494,-48.036],"GUZOLANDIA|SP":[-20.647,-50.664],"HERCULANDIA|SP":[-22.004,-50.391],"HOLAMBRA|SP":[-22.64,-47.049],"HORTOLANDIA|SP":[-22.853,-47.214],"IACANGA|SP":[-21.89,-49.031],"IACRI|SP":[-21.857,-50.693],"IARAS|SP":[-22.868,-49.163],"IBATE|SP":[-21.958,-47.988],"IBIRA|SP":[-21.083,-49.245],"IBIRAREMA|SP":[-22.819,-50.074],"IBITINGA|SP":[-21.756,-48.832],"IBIUNA|SP":[-23.66,-47.223],"ICEM|SP":[-20.339,-49.191],"IEPE|SP":[-22.66,-51.078],"IGARACU DO TIETE|SP":[-22.509,-48.56],"IGARAPAVA|SP":[-20.041,-47.747],"IGARATA|SP":[-23.204,-46.157],"IGUAPE|SP":[-24.699,-47.554],"IGUATU|CE":[-6.363,-39.289],"ILHA COMPRIDA|SP":[-24.731,-47.538],"ILHA SOLTEIRA|SP":[-20.433,-51.343],"ILHABELA|SP":[-23.779,-45.355],"INDAIATUBA|SP":[-23.082,-47.21],"INDIANA|SP":[-22.174,-51.255],"INDIAPORA|SP":[-19.979,-50.291],"INUBIA PAULISTA|SP":[-21.77,-50.963],"IPABA|MG":[-19.416,-42.414],"IPAUSSU|SP":[-23.058,-49.628],"IPERO|SP":[-23.351,-47.693],"IPEUNA|SP":[-22.436,-47.715],"IPIGUA|SP":[-20.656,-49.384],"IPORANGA|SP":[-24.585,-48.597],"IPUA|SP":[-20.444,-48.013],"IRACEMAPOLIS|SP":[-22.583,-47.523],"IRAPUA|SP":[-21.277,-49.416],"IRAPURU|SP":[-21.568,-51.347],"ITABERA|SP":[-23.864,-49.14],"ITAI|SP":[-23.421,-49.092],"ITAJOBI|SP":[-21.312,-49.063],"ITAJU|SP":[-21.986,-48.812],"ITANHAEM|SP":[-24.174,-46.788],"ITAOCA|SP":[-24.639,-48.841],"ITAPECERICA DA SERRA|SP":[-23.716,-46.857],"ITAPETININGA|SP":[-23.589,-48.048],"ITAPEVA|SP":[-23.979,-48.876],"ITAPEVI|SP":[-23.549,-46.933],"ITAPIRA|SP":[-22.436,-46.822],"ITAPIRAPUA PAULISTA|SP":[-24.572,-49.166],"ITAPOLIS|SP":[-21.594,-48.815],"ITAPORANGA|SP":[-23.704,-49.482],"ITAPUI|SP":[-22.232,-48.72],"ITAPURA|SP":[-20.642,-51.506],"ITAQUAQUECETUBA|SP":[-23.483,-46.346],"ITARARE|SP":[-24.108,-49.335],"ITARIRI|SP":[-24.283,-47.174],"ITATIBA|SP":[-23.003,-46.846],"ITATINGA|SP":[-23.105,-48.616],"ITIRAPINA|SP":[-22.256,-47.817],"ITIRAPUA|SP":[-20.642,-47.219],"ITOBI|SP":[-21.731,-46.974],"ITU|SP":[-23.254,-47.293],"ITUPEVA|SP":[-23.153,-47.059],"ITUVERAVA|SP":[-20.335,-47.79],"JABORANDI|SP":[-20.688,-48.411],"JABOTICABAL|SP":[-21.252,-48.325],"JACAREI|SP":[-23.298,-45.966],"JACI|SP":[-20.881,-49.58],"JACUPIRANGA|SP":[-24.696,-48.006],"JAGUARIUNA|SP":[-22.704,-46.985],"JALES|SP":[-20.267,-50.549],"JAMBEIRO|SP":[-23.252,-45.694],"JANDIRA|SP":[-23.527,-46.902],"JARDINOPOLIS|SP":[-21.018,-47.761],"JARINU|SP":[-23.104,-46.728],"JAU|SP":[-22.294,-48.559],"JERIQUARA|SP":[-20.312,-47.592],"JOANOPOLIS|SP":[-22.927,-46.274],"JOAO PESSOA|PB":[-7.115,-34.864],"JOAO RAMALHO|SP":[-22.247,-50.769],"JOINVILLE|SC":[-26.305,-48.849],"JOSE BONIFACIO|SP":[-21.055,-49.689],"JULIO MESQUITA|SP":[-22.011,-49.787],"JUMIRIM|SP":[-23.088,-47.787],"JUNDIAI|SP":[-23.185,-46.897],"JUNQUEIROPOLIS|SP":[-21.51,-51.434],"JUQUIA|SP":[-24.31,-47.643],"JUQUITIBA|SP":[-23.924,-47.065],"LAGOINHA|SP":[-23.085,-45.194],"LARANJAL PAULISTA|SP":[-23.051,-47.837],"LAURO DE FREITAS|BA":[-12.898,-38.321],"LAVINIA|SP":[-21.164,-51.041],"LAVRINHAS|SP":[-22.57,-44.902],"LEME|SP":[-22.181,-47.384],"LENCOIS PAULISTA|SP":[-22.603,-48.804],"LIMEIRA|SP":[-22.566,-47.397],"LINDOIA|SP":[-22.523,-46.65],"LINS|SP":[-21.672,-49.753],"LORENA|SP":[-22.733,-45.12],"LOURDES|SP":[-20.966,-50.226],"LOUVEIRA|SP":[-23.086,-46.948],"LUCELIA|SP":[-21.718,-51.022],"LUCIANOPOLIS|SP":[-22.429,-49.522],"LUIS ANTONIO|SP":[-21.55,-47.78],"LUIZIANIA|SP":[-21.674,-50.329],"LUPERCIO|SP":[-22.415,-49.818],"LUTECIA|SP":[-22.338,-50.394],"MACAPA|AP":[0.035,-51.069],"MACATUBA|SP":[-22.5,-48.71],"MACAUBAL|SP":[-20.802,-49.969],"MACEDONIA|SP":[-20.144,-50.197],"MACEIO|AL":[-9.666,-35.735],"MAGDA|SP":[-20.645,-50.23],"MAIRINQUE|SP":[-23.54,-47.185],"MAIRIPORA|SP":[-23.317,-46.59],"MANAUS|AM":[-3.119,-60.021],"MANDURI|SP":[-23.006,-49.32],"MARABA PAULISTA|SP":[-22.107,-51.962],"MARACAI|SP":[-22.615,-50.671],"MARACAJU|MS":[-21.61,-55.168],"MARAPOAMA|SP":[-21.259,-49.13],"MARAU|RS":[-28.45,-52.199],"MARIAPOLIS|SP":[-21.796,-51.182],"MARILIA|SP":[-22.217,-49.95],"MARINOPOLIS|SP":[-20.439,-50.825],"MARTINOPOLIS|SP":[-22.146,-51.171],"MATAO|SP":[-21.602,-48.364],"MAUA|SP":[-23.668,-46.461],"MENDONCA|SP":[-21.176,-49.579],"MERIDIANO|SP":[-20.358,-50.181],"MESOPOLIS|SP":[-19.968,-50.633],"MIGUELOPOLIS|SP":[-20.18,-48.031],"MINEIROS DO TIETE|SP":[-22.412,-48.451],"MIRA ESTRELA|SP":[-19.979,-50.139],"MIRACATU|SP":[-24.277,-47.462],"MIRANDOPOLIS|SP":[-21.131,-51.103],"MIRANTE DO PARANAPANEMA|SP":[-22.29,-51.908],"MIRASSOL|SP":[-20.817,-49.521],"MIRASSOLANDIA|SP":[-20.618,-49.462],"MOCOCA|SP":[-21.465,-47.002],"MOGI DAS CRUZES|SP":[-23.521,-46.185],"MOGI GUACU|SP":[-22.367,-46.943],"MOGI MIRIM|SP":[-22.433,-46.953],"MOMBUCA|SP":[-22.928,-47.559],"MONCOES|SP":[-20.851,-50.097],"MONGAGUA|SP":[-24.081,-46.627],"MONTE ALEGRE DO SUL|SP":[-22.682,-46.681],"MONTE ALTO|SP":[-21.265,-48.497],"MONTE APRAZIVEL|SP":[-20.768,-49.718],"MONTE AZUL PAULISTA|SP":[-20.907,-48.639],"MONTE CASTELO|SP":[-21.298,-51.568],"MONTE MOR|SP":[-22.945,-47.312],"MONTEIRO|PB":[-7.884,-37.118],"MONTEIRO LOBATO|SP":[-22.954,-45.841],"MORRO AGUDO|SP":[-20.729,-48.058],"MORUNGABA|SP":[-22.881,-46.79],"MOTUCA|SP":[-21.51,-48.154],"MURUTINGA DO SUL|SP":[-20.991,-51.277],"NANTES|SP":[-22.616,-51.24],"NARANDIBA|SP":[-22.406,-51.527],"NATAL|RN":[-5.794,-35.199],"NATIVIDADE DA SERRA|SP":[-23.371,-45.447],"NAZARE PAULISTA|SP":[-23.175,-46.398],"NEVES PAULISTA|SP":[-20.843,-49.636],"NHANDEARA|SP":[-20.695,-50.044],"NIPOA|SP":[-20.911,-49.783],"NIQUELANDIA|GO":[-14.466,-48.46],"NOVA ALIANCA|SP":[-21.016,-49.499],"NOVA CAMPINA|SP":[-24.122,-48.902],"NOVA CANAA PAULISTA|SP":[-20.384,-50.948],"NOVA CASTILHO|SP":[-20.762,-50.348],"NOVA EUROPA|SP":[-21.776,-48.571],"NOVA GRANADA|SP":[-20.532,-49.312],"NOVA GUATAPORANGA|SP":[-21.332,-51.645],"NOVA INDEPENDENCIA|SP":[-21.103,-51.49],"NOVA LUZITANIA|SP":[-20.856,-50.262],"NOVA ODESSA|SP":[-22.783,-47.294],"NOVA PRATA DO IGUACU|PR":[-25.631,-53.347],"NOVA SANTA RITA|RS":[-29.852,-51.284],"NOVA VICOSA|BA":[-17.893,-39.374],"NOVAIS|SP":[-20.989,-48.914],"NOVO HORIZONTE|SP":[-21.465,-49.223],"NUPORANGA|SP":[-20.73,-47.743],"OCAUCU|SP":[-22.438,-49.922],"OLEO|SP":[-22.944,-49.342],"OLIMPIA|SP":[-20.737,-48.911],"ONDA VERDE|SP":[-20.604,-49.293],"ORIENTE|SP":[-22.155,-50.097],"ORINDIUVA|SP":[-20.186,-49.346],"ORLANDIA|SP":[-20.717,-47.885],"OSASCO|SP":[-23.532,-46.792],"OSCAR BRESSANE|SP":[-22.315,-50.281],"OSVALDO CRUZ|SP":[-21.797,-50.879],"OURINHOS|SP":[-22.98,-49.87],"OURO VERDE|SP":[-21.487,-51.702],"OUROESTE|SP":[-20.006,-50.377],"PACAEMBU|SP":[-21.563,-51.265],"PALESTINA|SP":[-20.39,-49.431],"PALMARES PAULISTA|SP":[-21.085,-48.804],"PALMAS|TO":[-10.24,-48.356],"PALMEIRA D'OESTE|SP":[-20.415,-50.763],"PALMITAL|SP":[-22.786,-50.218],"PANORAMA|SP":[-21.354,-51.856],"PARAGUACU PAULISTA|SP":[-22.411,-50.573],"PARAIBUNA|SP":[-23.387,-45.664],"PARAISO|SP":[-21.016,-48.776],"PARAISO DAS AGUAS|MS":[-19.022,-53.012],"PARANAPANEMA|SP":[-23.386,-48.721],"PARANAPUA|SP":[-20.105,-50.589],"PARAPUA|SP":[-21.779,-50.795],"PARDINHO|SP":[-23.084,-48.368],"PARINTINS|AM":[-2.637,-56.729],"PARIQUERA ACU|SP":[-24.715,-47.874],"PARISI|SP":[-20.303,-50.016],"PATROCINIO PAULISTA|SP":[-20.638,-47.28],"PAULICEIA|SP":[-21.315,-51.832],"PAULINIA|SP":[-22.754,-47.149],"PAULISTANIA|SP":[-22.577,-49.401],"PAULO DE FARIA|SP":[-20.03,-49.4],"PEDERNEIRAS|SP":[-22.351,-48.778],"PEDRA BELA|SP":[-22.79,-46.446],"PEDRANOPOLIS|SP":[-20.247,-50.113],"PEDREGULHO|SP":[-20.253,-47.477],"PEDREIRA|SP":[-22.741,-46.895],"PEDRINHAS PAULISTA|SP":[-22.817,-50.793],"PEDRO DE TOLEDO|SP":[-24.276,-47.235],"PENAPOLIS|SP":[-21.415,-50.077],"PEREIRA BARRETO|SP":[-20.637,-51.112],"PEREIRAS|SP":[-23.08,-47.972],"PERUIBE|SP":[-24.312,-47.001],"PIACATU|SP":[-21.592,-50.6],"PIEDADE|SP":[-23.714,-47.426],"PILAR DO SUL|SP":[-23.808,-47.722],"PINDAMONHANGABA|SP":[-22.925,-45.461],"PINDORAMA|SP":[-21.185,-48.909],"PINHALZINHO|SP":[-22.781,-46.59],"PIQUEROBI|SP":[-21.875,-51.728],"PIQUETE|SP":[-22.607,-45.187],"PIRACAIA|SP":[-23.052,-46.359],"PIRACICABA|SP":[-22.734,-47.648],"PIRAJU|SP":[-23.198,-49.38],"PIRAJUI|SP":[-21.999,-49.461],"PIRANGI|SP":[-21.089,-48.661],"PIRAPORA DO BOM JESUS|SP":[-23.396,-46.999],"PIRAPOZINHO|SP":[-22.271,-51.498],"PIRASSUNUNGA|SP":[-21.996,-47.426],"PIRATININGA|SP":[-22.414,-49.134],"PITANGUEIRAS|SP":[-21.013,-48.221],"PLANALTO|SP":[-21.034,-49.933],"PLATINA|SP":[-22.637,-50.21],"POA|SP":[-23.533,-46.347],"POLONI|SP":[-20.783,-49.826],"POMPEIA|SP":[-22.107,-50.176],"PONGAI|SP":[-21.74,-49.36],"PONTA GROSSA|PR":[-25.092,-50.167],"PONTAL|SP":[-21.022,-48.042],"PONTALINDA|SP":[-20.44,-50.526],"PONTES GESTAL|SP":[-20.173,-49.706],"POPULINA|SP":[-19.945,-50.538],"PORANGABA|SP":[-23.176,-48.12],"PORTO ALEGRE|RS":[-30.032,-51.206],"PORTO FELIZ|SP":[-23.209,-47.525],"PORTO FERREIRA|SP":[-21.85,-47.487],"PORTO VELHO|RO":[-8.761,-63.9],"POTIM|SP":[-22.834,-45.255],"POTIRENDABA|SP":[-21.043,-49.382],"PRACINHA|SP":[-21.85,-51.087],"PRADOPOLIS|SP":[-21.363,-48.068],"PRAIA GRANDE|SP":[-24.008,-46.412],"PRATANIA|SP":[-22.811,-48.664],"PRESIDENTE ALVES|SP":[-22.1,-49.438],"PRESIDENTE BERNARDES|SP":[-22.008,-51.556],"PRESIDENTE EPITACIO|SP":[-21.765,-52.111],"PRESIDENTE PRUDENTE|SP":[-22.121,-51.392],"PRESIDENTE VENCESLAU|SP":[-21.873,-51.845],"PROMISSAO|SP":[-21.536,-49.86],"QUADRA|SP":[-23.299,-48.055],"QUATA|SP":[-22.246,-50.697],"QUEIROZ|SP":[-21.797,-50.242],"QUELUZ|SP":[-22.531,-44.778],"QUINTANA|SP":[-22.069,-50.307],"RAFARD|SP":[-23.011,-47.532],"RANCHARIA|SP":[-22.227,-50.893],"RECIFE|PE":[-8.047,-34.877],"REDENCAO DA SERRA|SP":[-23.264,-45.542],"REGENTE FEIJO|SP":[-22.218,-51.306],"REGINOPOLIS|SP":[-21.891,-49.227],"REGISTRO|SP":[-24.498,-47.845],"RESTINGA|SP":[-20.606,-47.483],"RIBEIRA|SP":[-24.652,-49.004],"RIBEIRAO BONITO|SP":[-22.069,-48.182],"RIBEIRAO BRANCO|SP":[-24.221,-48.764],"RIBEIRAO CORRENTE|SP":[-20.458,-47.59],"RIBEIRAO DO SUL|SP":[-22.789,-49.933],"RIBEIRAO DOS INDIOS|SP":[-21.838,-51.61],"RIBEIRAO GRANDE|SP":[-24.101,-48.368],"RIBEIRAO PIRES|SP":[-23.707,-46.406],"RIBEIRAO PRETO|SP":[-21.17,-47.81],"RIFAINA|SP":[-20.08,-47.429],"RINCAO|SP":[-21.589,-48.073],"RINOPOLIS|SP":[-21.728,-50.724],"RIO BRANCO|AC":[-9.975,-67.824],"RIO CLARO|SP":[-22.398,-47.555],"RIO DAS PEDRAS|SP":[-22.842,-47.605],"RIO DE JANEIRO|RJ":[-22.913,-43.2],"RIO GRANDE DA SERRA|SP":[-23.744,-46.397],"RIOLANDIA|SP":[-19.987,-49.684],"RIVERSUL|SP":[-23.829,-49.429],"ROSANA|SP":[-22.578,-53.06],"ROSEIRA|SP":[-22.894,-45.307],"RUBIACEA|SP":[-21.301,-50.73],"RUBINEIA|SP":[-20.176,-51.007],"SABINO|SP":[-21.459,-49.575],"SAGRES|SP":[-21.882,-50.959],"SALES|SP":[-21.343,-49.49],"SALES OLIVEIRA|SP":[-20.77,-47.837],"SALESOPOLIS|SP":[-23.529,-45.846],"SALMOURAO|SP":[-21.627,-50.861],"SALTINHO|SP":[-22.844,-47.675],"SALTO|SP":[-23.2,-47.293],"SALTO DE PIRAPORA|SP":[-23.647,-47.574],"SALTO GRANDE|SP":[-22.889,-49.983],"SALVADOR|BA":[-12.972,-38.501],"SANDOVALINA|SP":[-22.455,-51.765],"SANTA ADELIA|SP":[-21.243,-48.806],"SANTA ALBERTINA|SP":[-20.031,-50.73],"SANTA BARBARA D'OESTE|SP":[-22.755,-47.414],"SANTA BRANCA|SP":[-23.393,-45.888],"SANTA CLARA D'OESTE|SP":[-20.09,-50.949],"SANTA CRUZ DA CONCEICAO|SP":[-22.14,-47.451],"SANTA CRUZ DA ESPERANCA|SP":[-21.295,-47.43],"SANTA CRUZ DAS PALMEIRAS|SP":[-21.823,-47.248],"SANTA CRUZ DO RIO PARDO|SP":[-22.899,-49.635],"SANTA ERNESTINA|SP":[-21.462,-48.395],"SANTA FE DO SUL|SP":[-20.208,-50.932],"SANTA GERTRUDES|SP":[-22.457,-47.527],"SANTA ISABEL|SP":[-23.317,-46.224],"SANTA LUCIA|SP":[-21.685,-48.089],"SANTA MARIA DA SERRA|SP":[-22.566,-48.159],"SANTA MERCEDES|SP":[-21.349,-51.756],"SANTA RITA D'OESTE|SP":[-20.141,-50.836],"SANTA RITA DO PASSA QUATRO|SP":[-21.708,-47.478],"SANTA ROSA DE VITERBO|SP":[-21.478,-47.362],"SANTA SALETE|SP":[-20.243,-50.689],"SANTANA DA PONTE PENSA|SP":[-20.252,-50.801],"SANTANA DE PARNAIBA|SP":[-23.444,-46.918],"SANTO ANASTACIO|SP":[-21.975,-51.653],"SANTO ANDRE|SP":[-23.674,-46.543],"SANTO ANTONIO DA ALEGRIA|SP":[-21.086,-47.146],"SANTO ANTONIO DE POSSE|SP":[-22.603,-46.919],"SANTO ANTONIO DO ARACANGUA|SP":[-20.933,-50.498],"SANTO ANTONIO DO JARDIM|SP":[-22.112,-46.684],"SANTO ANTONIO DO PINHAL|SP":[-22.827,-45.663],"SANTO EXPEDITO|SP":[-21.847,-51.393],"SANTOPOLIS DO AGUAPEI|SP":[-21.638,-50.504],"SANTOS|SP":[-23.953,-46.335],"SAO BENTO DO SAPUCAI|SP":[-22.684,-45.729],"SAO BERNARDO DO CAMPO|SP":[-23.691,-46.565],"SAO CAETANO DO SUL|SP":[-23.623,-46.555],"SAO CARLOS|SP":[-22.017,-47.886],"SAO FRANCISCO|SP":[-20.362,-50.695],"SAO JOAO DA BOA VISTA|SP":[-21.971,-46.794],"SAO JOAO DAS DUAS PONTES|SP":[-20.388,-50.379],"SAO JOAO DE IRACEMA|SP":[-20.511,-50.356],"SAO JOAO DO PAU D'ALHO|SP":[-21.266,-51.667],"SAO JOAQUIM DA BARRA|SP":[-20.581,-47.859],"SAO JOSE DA BELA VISTA|SP":[-20.593,-47.642],"SAO JOSE DO BARREIRO|SP":[-22.641,-44.577],"SAO JOSE DO RIO PARDO|SP":[-21.595,-46.887],"SAO JOSE DO RIO PRETO|SP":[-20.811,-49.376],"SAO JOSE DOS CAMPOS|SP":[-23.19,-45.884],"SAO JOSE DOS PINHAIS|PR":[-25.531,-49.203],"SAO LOURENCO DA SERRA|SP":[-23.849,-46.943],"SAO LUIS|MA":[-2.539,-44.282],"SAO LUIZ DO PARAITINGA|SP":[-23.222,-45.311],"SAO MANUEL|SP":[-22.732,-48.572],"SAO MIGUEL ARCANJO|SP":[-23.878,-47.993],"SAO PAULO|SP":[-23.533,-46.639],"SAO PEDRO|SP":[-22.548,-47.91],"SAO PEDRO DO TURVO|SP":[-22.745,-49.743],"SAO ROQUE|SP":[-23.523,-47.136],"SAO SEBASTIAO|SP":[-23.795,-45.414],"SAO SEBASTIAO DA GRAMA|SP":[-21.704,-46.821],"SAO SIMAO|SP":[-21.473,-47.552],"SAO VICENTE|SP":[-23.957,-46.388],"SARAPUI|SP":[-23.64,-47.825],"SARUTAIA|SP":[-23.272,-49.476],"SEBASTIANOPOLIS DO SUL|SP":[-20.652,-49.925],"SERRA AZUL|SP":[-21.307,-47.56],"SERRA NEGRA|SP":[-22.614,-46.703],"SERRANA|SP":[-21.204,-47.595],"SERTAOZINHO|SP":[-21.132,-47.987],"SETE BARRAS|SP":[-24.382,-47.928],"SEVERINIA|SP":[-20.811,-48.805],"SILVEIRAS|SP":[-22.664,-44.852],"SIMOES FILHO|BA":[-12.787,-38.403],"SOCORRO|SP":[-22.59,-46.525],"SOROCABA|SP":[-23.497,-47.445],"SUD MENNUCCI|SP":[-20.687,-50.924],"SUMARE|SP":[-22.82,-47.273],"SUZANAPOLIS|SP":[-20.498,-51.027],"SUZANO|SP":[-23.545,-46.311],"TABAPUA|SP":[-20.96,-49.031],"TABATINGA|SP":[-21.724,-48.69],"TABOAO DA SERRA|SP":[-23.602,-46.753],"TACIBA|SP":[-22.387,-51.288],"TAGUAI|SP":[-23.445,-49.402],"TAIACU|SP":[-21.143,-48.511],"TAIUVA|SP":[-21.122,-48.453],"TAMBAU|SP":[-21.703,-47.27],"TANABI|SP":[-20.623,-49.656],"TAPIRAI|SP":[-23.961,-47.506],"TAPIRATIBA|SP":[-21.471,-46.745],"TAQUARAL|SP":[-21.074,-48.413],"TAQUARITINGA|SP":[-21.405,-48.51],"TAQUARITUBA|SP":[-23.531,-49.241],"TAQUARIVAI|SP":[-23.921,-48.695],"TARABAI|SP":[-22.302,-51.562],"TARUMA|SP":[-22.743,-50.579],"TATUI|SP":[-23.349,-47.846],"TAUBATE|SP":[-23.01,-45.559],"TEJUPA|SP":[-23.343,-49.372],"TEODORO SAMPAIO|SP":[-22.53,-52.168],"TERESINA|PI":[-5.092,-42.803],"TERRA ROXA|SP":[-20.787,-48.331],"TIETE|SP":[-23.11,-47.716],"TIMBURI|SP":[-23.206,-49.61],"TORRE DE PEDRA|SP":[-23.246,-48.196],"TORRINHA|SP":[-22.424,-48.173],"TRABIJU|SP":[-22.039,-48.334],"TREMEMBE|SP":[-22.957,-45.547],"TRES FRONTEIRAS|SP":[-20.234,-50.891],"TUIUTI|SP":[-22.819,-46.694],"TUPA|SP":[-21.933,-50.519],"TUPI PAULISTA|SP":[-21.383,-51.575],"TURIUBA|SP":[-20.943,-50.114],"TURMALINA|SP":[-20.049,-50.479],"UBARANA|SP":[-21.165,-49.72],"UBATUBA|SP":[-23.433,-45.083],"UBERLANDIA|MG":[-18.914,-48.275],"UBIRAJARA|SP":[-22.527,-49.661],"UCHOA|SP":[-20.951,-49.171],"UNIAO DA VITORIA|PR":[-26.227,-51.087],"UNIAO PAULISTA|SP":[-20.886,-49.903],"URANIA|SP":[-20.245,-50.645],"URU|SP":[-21.787,-49.285],"URUPES|SP":[-21.203,-49.293],"VALENTIM GENTIL|SP":[-20.422,-50.089],"VALINHOS|SP":[-22.97,-46.997],"VALPARAISO|SP":[-21.223,-50.87],"VARGEM|SP":[-22.887,-46.412],"VARGEM GRANDE DO SUL|SP":[-21.832,-46.891],"VARGEM GRANDE PAULISTA|SP":[-23.599,-47.022],"VARZEA PAULISTA|SP":[-23.214,-46.823],"VERA CRUZ|SP":[-22.218,-49.821],"VESPASIANO|MG":[-19.688,-43.924],"VILA VELHA|ES":[-20.342,-40.288],"VINHEDO|SP":[-23.03,-46.983],"VIRADOURO|SP":[-20.873,-48.293],"VISTA ALEGRE DO ALTO|SP":[-21.169,-48.628],"VITORIA|ES":[-20.316,-40.313],"VITORIA BRASIL|SP":[-20.196,-50.487],"VITORIA DA CONQUISTA|BA":[-14.861,-40.844],"VOTORANTIM|SP":[-23.545,-47.439],"VOTUPORANGA|SP":[-20.424,-49.978],"ZACARIAS|SP":[-21.051,-50.055]}
+
+# Coordenadas aproximadas dos setores de CEP da capital (Correios: 01 centro, 02 norte,
+# 03 leste, 04 sul, 05 oeste, 08 extremo leste) — usadas para medir distância dentro de SP.
+SETORES_CAPITAL = [   # (CEP inicial, CEP final, latitude, longitude) — centro aproximado do distrito
+    (1000000, 1299999, -23.540, -46.640), (1300000, 1499999, -23.561, -46.659), (1500000, 1599999, -23.566, -46.632),
+    (2000000, 2099999, -23.502, -46.625), (2100000, 2199999, -23.515, -46.590), (2200000, 2399999, -23.468, -46.600),
+    (2400000, 2499999, -23.480, -46.635), (2500000, 2699999, -23.505, -46.665), (2700000, 2999999, -23.490, -46.690),
+    (3000000, 3099999, -23.540, -46.615), (3100000, 3199999, -23.555, -46.595), (3200000, 3299999, -23.590, -46.555),
+    (3300000, 3499999, -23.555, -46.555), (3500000, 3699999, -23.530, -46.535), (3700000, 3899999, -23.505, -46.490),
+    (3900000, 3999999, -23.610, -46.480), (4000000, 4099999, -23.588, -46.637), (4100000, 4199999, -23.615, -46.625),
+    (4200000, 4299999, -23.590, -46.605), (4300000, 4399999, -23.645, -46.640), (4400000, 4499999, -23.675, -46.645),
+    (4500000, 4599999, -23.585, -46.680), (4600000, 4699999, -23.625, -46.670), (4700000, 4799999, -23.650, -46.705),
+    (4800000, 4899999, -23.735, -46.700), (4900000, 4999999, -23.700, -46.735), (5000000, 5099999, -23.530, -46.690),
+    (5100000, 5199999, -23.485, -46.730), (5200000, 5299999, -23.410, -46.755), (5300000, 5399999, -23.545, -46.745),
+    (5400000, 5499999, -23.565, -46.690), (5500000, 5599999, -23.575, -46.725), (5600000, 5699999, -23.600, -46.720),
+    (5700000, 5799999, -23.640, -46.760), (5800000, 5899999, -23.665, -46.775), (5900000, 5999999, -23.690, -46.760),
+    (8000000, 8099999, -23.495, -46.445), (8100000, 8199999, -23.490, -46.405), (8200000, 8299999, -23.540, -46.455),
+    (8300000, 8399999, -23.585, -46.420), (8400000, 8499999, -23.545, -46.405),
+]
+
+def _norm_mun(x):
+    s = unicodedata.normalize("NFKD", str(x)).encode("ascii", "ignore").decode().upper()
+    return re.sub(r"[\s\-]+", " ", s).strip()
+
+_ALIAS_MUN = {"EMBU": "EMBU DAS ARTES", "MOGI GUACU": "MOGI GUACU"}
+
+def _cep_int(v):
+    d = re.sub(r"\D", "", str(v))
+    if not d or d in ("0",):
+        return None
+    try:
+        n = int(d[:8]) if len(d) >= 8 else int(d)
+    except ValueError:
+        return None
+    return n if 1000000 <= n <= 99999999 else None
+
+def _coord_setor(cep):
+    if cep is None:
+        return None
+    for ini, fim, la, lo in SETORES_CAPITAL:
+        if ini <= cep <= fim:
+            return (la, lo)
+    return None
+
+def _coord_cidade(cidade, uf, mun):
+    c = _norm_mun(cidade)
+    c = _ALIAS_MUN.get(c, c)
+    uf = str(uf or "").strip().upper()
+    if uf and f"{c}|{uf}" in mun:
+        return tuple(mun[f"{c}|{uf}"])
+    if f"{c}|SP" in mun:
+        return tuple(mun[f"{c}|SP"])
+    return None
+
+def _dist_km(a, b):
+    la1, lo1, la2, lo2 = map(math.radians, (a[0], a[1], b[0], b[1]))
+    h = math.sin((la2 - la1) / 2) ** 2 + math.cos(la1) * math.cos(la2) * math.sin((lo2 - lo1) / 2) ** 2
+    return 6371 * 2 * math.asin(math.sqrt(h))
+
+def calcular_responsaveis(df_emp, df_area, df_cart, mun, norm_fn, zona_livre="ZONA LIVRE"):
+    """Retorna (resp_key: Series alinhada a df_emp, origem: Series, resumo: dict).
+    Um único responsável por cliente (CNPJ). Cliente sem CNPJ (CPF mascarado) = cada chassi."""
+    # 1. Territórios: faixas de CEP com ponto geográfico
+    faixas, pontos = [], []
+    for r in df_area.itertuples(index=False):
+        cons = getattr(r, "Consultor")
+        if not cons or cons == zona_livre:
+            continue
+        ini, fim = _cep_int(getattr(r, "CEP_ini_norm")), _cep_int(getattr(r, "CEP_fim_norm"))
+        if ini and fim:
+            faixas.append((ini, fim, cons))
+        p = _coord_setor(ini) if ini else None
+        if p is None:
+            p = _coord_cidade(getattr(r, "Municipio"), "SP", mun)
+        if p is None and ini:
+            p = None
+        if p is not None:
+            pontos.append((p, cons, ini, fim))
+    faixas.sort()
+
+    def por_faixa(cep):
+        if cep is None:
+            return None
+        for ini, fim, cons in faixas:
+            if ini <= cep <= fim:
+                return cons
+            if ini > cep:
+                break
+        return None
+
+    def mais_proximo(coord, cep):
+        if coord is not None and pontos:
+            return min(pontos, key=lambda t: (_dist_km(coord, t[0]),
+                                              abs((cep or t[2]) - (t[2] + t[3]) // 2)))[1]
+        if cep is not None and faixas:   # sem coordenada: CEP numericamente mais próximo
+            return min(faixas, key=lambda t: 0 if t[0] <= cep <= t[1] else min(abs(cep - t[0]), abs(cep - t[1])))[2]
+        return None
+
+    # 2. Dono pela Carteira
+    cart = {}
+    if df_cart is not None and "CNPJ_NORM" in df_cart.columns:
+        tmp = df_cart[["CNPJ_NORM", "VENDEDOR"]].dropna()
+        tmp = tmp[(tmp["CNPJ_NORM"].astype(str).str.len() >= 11) & (tmp["VENDEDOR"].astype(str).str.strip() != "")]
+        cart = dict(zip(tmp["CNPJ_NORM"].astype(str), norm_fn(tmp["VENDEDOR"])))
+
+    # 3. Uma decisão por cliente, usando o emplacamento mais recente com CEP
+    chave = df_emp["CNPJ_NORM"].astype(str)
+    chave = chave.where(chave.str.len() >= 11, "CH:" + df_emp["Chassi"].astype(str))
+    ordem = df_emp.assign(chave_cli=chave, cep_int=df_emp["CEP_norm"].map(_cep_int)) \
+                  .sort_values("Data emplacamento", ascending=False, kind="stable")
+    ult = ordem.drop_duplicates("chave_cli")
+    ult_cep = ordem.dropna(subset=["cep_int"]).drop_duplicates("chave_cli").set_index("chave_cli")["cep_int"]
+
+    decisao, origem = {}, {}
+    fallback_geral = mais_proximo(_coord_setor(1001000), 1001000)   # centro de SP
+    for r in ult.itertuples(index=False):
+        k = r.chave_cli
+        if k in cart:
+            decisao[k], origem[k] = cart[k], "Carteira"; continue
+        cep = ult_cep.get(k)
+        cep = int(cep) if cep is not None and cep == cep else None
+        v = por_faixa(cep)
+        if v:
+            decisao[k], origem[k] = v, "Área (CEP)"; continue
+        coord = _coord_setor(cep) or _coord_cidade(getattr(r, "NO_CIDADE"), getattr(r, "SG_ESTADO", ""), mun)
+        v = mais_proximo(coord, cep) or fallback_geral
+        decisao[k], origem[k] = v, "Mais próximo"
+
+    resp = chave.map(decisao)
+    orig = chave.map(origem)
+    resumo = {"clientes": len(decisao),
+              "por_origem": pd.Series(origem).value_counts().to_dict(),
+              "sem_responsavel": int(resp.isna().sum())}
+    return resp, orig, resumo
+
+
+@st.cache_resource(show_spinner=False, max_entries=4)
+def _responsaveis_cache(_chave, _df_emp, _df_area, _df_cart):
+    return calcular_responsaveis(_df_emp, _df_area, _df_cart, MUN_COORDS, norm_str_series)
+
+def aplicar_responsaveis(df_emp, df_area, df_cart):
+    """Adiciona RESP_KEY / RESP_ORIGEM: cada cliente fica com UM vendedor, nunca dois, nunca nenhum."""
+    if df_emp is None or df_emp.empty or df_area is None:
+        return df_emp
+    try:
+        _ch = (len(df_emp), str(df_emp["Data emplacamento"].max()), str(df_emp["Chassi"].iloc[-1]),
+               tuple(map(tuple, df_area[["Consultor", "CEP_ini_norm", "CEP_fim_norm"]].astype(str).values.tolist())),
+               int(pd.util.hash_pandas_object(df_cart[["CNPJ_NORM", "VENDEDOR"]].astype(str), index=False).sum()) if df_cart is not None else 0)
+        resp, orig, _res = _responsaveis_cache(_ch, df_emp, df_area, df_cart)
+        out = df_emp.copy(deep=False)
+        out["RESP_KEY"] = resp.values
+        out["RESP_ORIGEM"] = orig.values
+        _m = out.dropna(subset=["RESP_KEY"])
+        st.session_state["_resp_map"] = dict(zip(_m["CNPJ_NORM"], _m["RESP_KEY"]))
+        st.session_state["_resp_origem"] = dict(zip(_m["CNPJ_NORM"], _m["RESP_ORIGEM"]))
+        return out
+    except Exception as _e:
+        st.session_state["_resp_erro"] = str(_e)
+        return df_emp
+
+def responsavel_do_cnpj(cnpj):
+    return (st.session_state.get("_resp_map") or {}).get(str(cnpj))
+
+def get_consultor(cep_norm, cidade_norm, bairro_norm, df_area, cnpj=None):
     """Retorna consultor por CEP (faixa) — critério principal.
     Fallback por Cidade_real quando não há CEP válido.
     """
+    _r = responsavel_do_cnpj(cnpj) if cnpj else None
+    if _r:
+        return _r                      # responsável único do cliente
     if df_area is None: return None
     # 1. CEP (sempre preferido)
     if cep_norm and len(cep_norm) == 8:
@@ -1608,13 +1780,16 @@ def get_munic_area(consultor, df_area):
     cep_ranges = sub[sub["CEP_ini_norm"] != ""][["CEP_ini_norm","CEP_fim_norm"]].values.tolist()
     return cidades, cep_ranges
 
-def emp_da_area(df_emp, cidades_reais, cep_ranges):
+def emp_da_area(df_emp, cidades_reais, cep_ranges, consultor=None):
     """Filtra emplacamentos da área.
     Regra: CEP é o critério principal (sempre preferido).
     Fallback por cidade real (ex: 'SAO PAULO', 'GUARULHOS') para registros sem CEP válido.
     cidades_reais já foi mapeado pelo load_area (bairros SP → 'SAO PAULO').
     """
     if df_emp is None or df_emp.empty: return pd.DataFrame()
+    # Responsável único: o cliente aparece só para o vendedor dono dele (nunca para dois)
+    if consultor and "RESP_KEY" in df_emp.columns:
+        return df_emp[df_emp["RESP_KEY"] == norm_str(consultor)].copy()
 
     # ── 1. Filtro por CEP (faixas da área operacional) ──
     mask_cep = pd.Series(False, index=df_emp.index)
@@ -2227,6 +2402,7 @@ if st.session_state.df_emp_list and st.session_state.get("_emp_merged_len") != _
     st.session_state["_df_emp_merged"] = merge_emp(st.session_state.df_emp_list)
     st.session_state["_emp_merged_len"] = _emp_list_len
 df_emp = st.session_state.get("_df_emp_merged") if st.session_state.df_emp_list else None
+df_emp = aplicar_responsaveis(df_emp, df_area, df_cart)
 
 PAGINAS_GESTOR  = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun."),("vendedor360","🧭","Vend. 360"),("mapa","🗺️","Mapa"),("assistente_ia","🤖","Assistente IA"),("admin","⚙️","Admin")]
 PAGINAS_GERENTE = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun."),("vendedor360","🧭","Vend. 360"),("mapa","🗺️","Mapa"),("assistente_ia","🤖","Assistente IA")]
@@ -2357,7 +2533,7 @@ if pagina == "busca":
         cep_c    = norm_cep(last.get("NU_CEP",""))
         cidade_c = norm_str(str(last.get("NO_CIDADE","")))
         bairro_c = norm_str(str(last.get("NO_BAIRRO","")))
-        cons_resp = get_consultor(cep_c, cidade_c, bairro_c, df_area) if df_area is not None else "—"
+        cons_resp = get_consultor(cep_c, cidade_c, bairro_c, df_area, cnpj=cnpj_sel) if df_area is not None else "—"
         _mostrar_resultado = True
 
     if buscar and q:
@@ -2459,7 +2635,7 @@ if pagina == "busca":
         cep_c  = norm_cep(last.get("NU_CEP",""))
         cid_c  = norm_str(str(last.get("NO_CIDADE","")))
         bai_c  = norm_str(str(last.get("NO_BAIRRO","")))
-        consultor_resp = get_consultor(cep_c, cid_c, bai_c, df_area)
+        consultor_resp = get_consultor(cep_c, cid_c, bai_c, df_area, cnpj=cnpj_sel)
         if consultor_resp is None and cart_row:
             consultor_resp = safe_str(cart_row.get("VENDEDOR",""))
 
@@ -3039,7 +3215,7 @@ elif pagina == "emplacamentos":
         emp_mes  = df_emp[(df_emp["Ano"]==sel_ano) & (df_emp["Mes"]==sel_mes)].copy()
     else:
         # Vendedor específico: filtra por área geográfica + carteira
-        emp_area_total = emp_da_area(df_emp, munic_area, cep_ranges)
+        emp_area_total = emp_da_area(df_emp, munic_area, cep_ranges, consultor=sel_cons)
         if len(cnpjs_carteira_set) > 0:
             emp_cart_extra = df_emp[
                 df_emp["CNPJ_NORM"].isin(cnpjs_carteira_set) &
@@ -3391,8 +3567,11 @@ elif pagina == "gestao":
         cnpj_to_vendkey_g = dict(zip(_tmp_cart_g["CNPJ_NORM"], norm_str_series(_tmp_cart_g["VENDEDOR"])))
     mc_gx = df_area.groupby("Municipio_norm")["Consultor"].first().to_dict() if df_area is not None else {}
 
-    df_g["_vend_key"] = df_g["CNPJ_NORM"].map(cnpj_to_vendkey_g)
-    df_g["_vend_key"] = df_g["_vend_key"].fillna(df_g["NO_CIDADE_NORM"].map(mc_gx))
+    if "RESP_KEY" in df_g.columns:
+        df_g["_vend_key"] = df_g["RESP_KEY"]          # responsável único (carteira → CEP → mais próximo)
+    else:
+        df_g["_vend_key"] = df_g["CNPJ_NORM"].map(cnpj_to_vendkey_g)
+        df_g["_vend_key"] = df_g["_vend_key"].fillna(df_g["NO_CIDADE_NORM"].map(mc_gx))
     df_g["Consultor"] = df_g["_vend_key"].map(label_by_key_g).fillna("Sem consultor definido")
 
     if cons_s_g_lbl != "Todos":
@@ -3687,7 +3866,7 @@ elif pagina == "oportunidades":
     if perfil == "vendedor" and df_area is not None:
         munic_m, cep_r_m = get_munic_area(cons_key, df_area)
         # Passo 1: pegar emplacamentos da área geográfica
-        df_opp_area = emp_da_area(df_emp, munic_m, cep_r_m)
+        df_opp_area = emp_da_area(df_emp, munic_m, cep_r_m, consultor=cons_key)
         # Passo 2: adicionar clientes da carteira do vendedor que estão fora da área
         if df_cart is not None:
             cnpjs_minha_cart = set(df_cart[norm_str_series(df_cart["VENDEDOR"]) == norm_str(cons_key)]["CNPJ_NORM"].dropna())
@@ -3819,7 +3998,7 @@ elif pagina == "vendedor360":
 
     # ── Universo do vendedor: área geográfica (CEP/cidade) + carteira nominal, menos conflito com outro vendedor ──
     munic_v, cep_r_v = get_munic_area(cons_v360, df_area)
-    df_area_v = emp_da_area(df_emp, munic_v, cep_r_v)
+    df_area_v = emp_da_area(df_emp, munic_v, cep_r_v, consultor=cons_v360)
 
     cart_v = df_cart[norm_str_series(df_cart["VENDEDOR"]) == cons_v360].copy() if df_cart is not None else pd.DataFrame()
     cnpjs_minha_cart_v = set(cart_v["CNPJ_NORM"].dropna()) if not cart_v.empty else set()
@@ -4766,7 +4945,7 @@ elif pagina == "mapa":
 
     if perfil == "vendedor" and df_area is not None:
         munic_m, cep_r_m = get_munic_area(cons_key, df_area)
-        df_mapa_base = emp_da_area(df_emp, munic_m, cep_r_m)
+        df_mapa_base = emp_da_area(df_emp, munic_m, cep_r_m, consultor=cons_key)
     else:
         df_mapa_base = df_emp.copy()
 
