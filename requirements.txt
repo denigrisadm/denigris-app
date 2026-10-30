@@ -7,3 +7,4 @@ unicodedata2>=15.0.0
 xlrd>=2.0.1
 folium
 streamlit-folium
+pyarrow>=14.0.0
