@@ -1,10 +1,10 @@
 {
   "ADMIN": {
-    "senha_hash": "0e89f223e226ae63268cf39152ab75722e811b89d29efb22a852f1667bd22ae0",
+    "senha_hash": "pbkdf2$210000$b2b5d16c022389052336d9610f053425$4964466f4a26eaae59b629fc3423e32393c665d9c8e52cf757926069eab37bf3",
     "perfil": "gestor",
     "nome": "Administrador",
     "consultor_key": "ADMIN",
-    "ultimo_acesso": "2026-08-25T12:07:04"
+    "ultimo_acesso": "2026-10-30T13:54:52"
   },
   "CARLOS": {
     "senha_hash": "ac9c2c34c9f7ad52528c3422af40a66e2e24aaf2a727831255413c9470158984",
