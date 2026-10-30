@@ -112,10 +112,10 @@
     "ultimo_acesso": "2026-08-17T14:54:52"
   },
   "EDUARDO": {
-    "senha_hash": "0020a1bb56cb71c099032f5997269e77fdb488a3869a7127c9add46724f49726",
+    "senha_hash": "pbkdf2$210000$44af1ef6fe6a849b9278df153cf24000$263edc073ff9e7bdce257f5ab35107fac92eb31eb2ded3b01b590c7b4ada6316",
     "perfil": "vendedor",
     "nome": "EDUARDO GARBIM",
     "consultor_key": "EDUARDO GARBIM",
-    "ultimo_acesso": "2026-08-31T12:53:27"
+    "ultimo_acesso": "2026-10-30T15:29:47"
   }
 }
