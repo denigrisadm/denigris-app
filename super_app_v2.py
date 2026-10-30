@@ -8,6 +8,7 @@ from io import BytesIO
 import datetime
 import base64
 import hmac, time, pickle
+import numpy as np
 import secrets as _pysecrets
 
 # Copy-on-write: cada sessão recebe uma "cópia rasa" dos DataFrames compartilhados.
@@ -57,7 +58,9 @@ st.markdown('''
 DATA_DIR      = "data"
 AREA_FILE     = os.path.join(DATA_DIR, "AREA_OPERACIONAL.xlsx")
 CARTEIRA_FILE = os.path.join(DATA_DIR, "CARTEIRA.xlsx")
-EMP_FILE      = os.path.join(DATA_DIR, "EMPLACAMENTOS.xlsx")  # base completa 2021-
+EMP_FILE      = os.path.join(DATA_DIR, "EMPLACAMENTOS.xlsx")  # base completa 2021- (legado)
+EMP_PARQUET   = os.path.join(DATA_DIR, "EMPLACAMENTOS.parquet")  # base oficial (atualizada pelo botão)
+EMP_REMOTE    = "data/EMPLACAMENTOS.parquet"
 USERS_FILE    = os.path.join(DATA_DIR, "users.json")
 CONFIG_FILE   = os.path.join(DATA_DIR, "config.json")
 
@@ -376,6 +379,49 @@ def norm_cep(v):
         # Se for string com formatação (ex: 05113-020), remover não-dígitos
         s = re.sub(r"\D", "", str(v))
         return s.zfill(8)[:8] if s else ""
+
+class _FalhaCNPJ(Exception):
+    pass
+
+@st.cache_data(ttl=7 * 86400, max_entries=20000, show_spinner=False)
+def _consultar_cnpj_publico(cnpj14):
+    """Consulta CNPJ.ws → BrasilAPI → ReceitaWS. Resultado fica em cache compartilhado por 7 dias:
+    o mesmo CNPJ consultado por 10 vendedores = 1 chamada externa. Falhas NÃO entram no cache."""
+    import urllib.request as _ur, urllib.error as _ue
+    fontes = [
+        f"https://publica.cnpj.ws/cnpj/{cnpj14}",
+        f"https://brasilapi.com.br/api/cnpj/v1/{cnpj14}",
+        f"https://www.receitaws.com.br/v1/cnpj/{cnpj14}",
+    ]
+    err = "Falha desconhecida"
+    for url in fontes:
+        for tentativa in range(2):
+            try:
+                req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with _ur.urlopen(req, timeout=12) as r:
+                    data = json.loads(r.read().decode())
+                if isinstance(data, dict) and data.get("status") == "ERROR":
+                    err = data.get("message", "CNPJ não encontrado")
+                    break
+                return data
+            except _ue.HTTPError as e:
+                if e.code == 429:
+                    err = "Limite de consultas das APIs públicas atingido (aguarde ~1 min)"
+                    break          # limite: pula direto para a próxima fonte, sem esperar
+                if e.code == 404:
+                    err = "CNPJ não encontrado nessa base"
+                    break
+                err = f"HTTP {e.code}"
+            except Exception as e:
+                err = f"Instabilidade na conexão ({type(e).__name__})"
+            if tentativa == 0:
+                time.sleep(1.0)
+    raise _FalhaCNPJ(err)
+
+def _moda_segura(x):
+    """Valor mais frequente; '—' quando o grupo só tem vazios (evita KeyError no mode()[0])."""
+    m = x.dropna().mode()
+    return m.iloc[0] if len(m) else "—"
 
 def safe_str(v, fallback="—"):
     s = str(v).strip() if not pd.isna(v) else ""
@@ -1329,17 +1375,226 @@ def _load_emp_base(src, label="", _mt=0):
 def load_emplacamentos(src, label=""):
     return _load_emp_base(src, label, _mtime(src)).copy(deep=False)
 
-def _load_emp_raw(src, label=""):
-    if isinstance(src, BytesIO): src.seek(0)
-    # Detectar linha do header (procura "Chassi" nas primeiras 15 linhas; default=0)
-    raw = pd.read_excel(src, header=None, nrows=15)
-    header_row = 0
-    for i in range(len(raw)):
-        if any("Chassi" in str(v) for v in raw.iloc[i].tolist()):
-            header_row = i; break
-    if isinstance(src, BytesIO): src.seek(0)
-    df = pd.read_excel(src, header=header_row)
+
+# ════════════════════════════════════════════════════════════════
+# IMPORTADOR SEMANAL — relatório de enriquecimento → base EMPLACAMENTOS
+# ════════════════════════════════════════════════════════════════
+
+def _so_digitos(v):
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return ""
+    s = str(v).strip()
+    if re.fullmatch(r"\d+\.0", s):
+        s = s[:-2]
+    return re.sub(r"\D", "", s)
+
+def formatar_cpf_cnpj(v, tipo=""):
+    """CNPJ → 00.000.000/0000-00 · CPF → 000.000.000-00 · mascarado/vazio → mantém.
+    Usa TIPOCNPJPROPRIETARIO (FISICA/JURIDICA) quando disponível."""
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return v
+    s = str(v).strip()
+    d = _so_digitos(s)
+    if "*" in s or not d:
+        return s
+    eh_cpf = str(tipo).strip().upper().startswith("FIS") if tipo else (len(d) == 11 and "/" not in s)
+    if eh_cpf:
+        d = d.zfill(11)
+        return f"{d[:3]}.{d[3:6]}.{d[6:9]}-{d[9:]}"
+    d = d.zfill(14)
+    return f"{d[:2]}.{d[2:5]}.{d[5:8]}/{d[8:12]}-{d[12:]}"
+
+def _num_para_texto(v):
+    """58511337.0 → '58511337' (telefones vêm como número decimal no relatório)."""
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return np.nan
+    s = str(v).strip()
+    if re.fullmatch(r"-?\d+\.0+", s):
+        s = s.split(".")[0]
+    return s if s and s.lower() != "nan" else np.nan
+
+_COLS_TELEFONE = re.compile(r"^(TELEFONE\d|CELULAR\d|TEL\d_(FIXO|CEL)_SOCIO\d)$")
+
+def ler_planilha_bruta(src):
+    """Lê o Excel achando sozinho a linha do cabeçalho (a que tem 'Chassi')."""
+    if isinstance(src, (bytes, bytearray)):
+        src = BytesIO(src)
+    if hasattr(src, "seek"): src.seek(0)
+    topo = pd.read_excel(src, header=None, nrows=30)
+    linha = 0
+    for i in range(len(topo)):
+        if any(str(v).strip() == "Chassi" for v in topo.iloc[i].tolist()):
+            linha = i; break
+    if hasattr(src, "seek"): src.seek(0)
+    df = pd.read_excel(src, header=linha)
     df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+def preparar_relatorio(src, df_cart, colunas_base):
+    """Faz a limpeza semanal que era manual. Retorna (df_pronto, resumo)."""
+    df = ler_planilha_bruta(src)
+    if "Chassi" not in df.columns:
+        raise ValueError("Não achei a coluna 'Chassi'. Confira se é o relatório de enriquecimento.")
+    linhas_lidas = len(df)
+    df["Chassi"] = df["Chassi"].astype(str).str.strip().str.upper()
+    df = df[df["Chassi"].str.len() >= 10].copy()          # remove rodapé / linhas vazias
+    dup_internos = int(df["Chassi"].duplicated().sum())
+    df = df.drop_duplicates(subset=["Chassi"], keep="last")
+
+    # CNPJ/CPF no formato da base
+    _tipo = df["TIPOCNPJPROPRIETARIO"] if "TIPOCNPJPROPRIETARIO" in df.columns else pd.Series([""] * len(df), index=df.index)
+    df["CPFCNPJPROPRIETARIO"] = [formatar_cpf_cnpj(v, t) for v, t in zip(df["CPFCNPJPROPRIETARIO"], _tipo)]
+    # Telefones: número decimal → texto
+    for c in df.columns:
+        if _COLS_TELEFONE.match(c):
+            df[c] = df[c].apply(_num_para_texto)
+
+    # Vendedor: dono do CNPJ na CARTEIRA (igual ao processo manual)
+    mapa = {}
+    if df_cart is not None and "CPF/CNPJ" in df_cart.columns:
+        k = df_cart["CPF/CNPJ"].apply(_so_digitos)
+        mapa = dict(zip(k, df_cart.get("VENDEDOR", pd.Series([""] * len(df_cart))).astype(str).str.strip()))
+        mapa.pop("", None)
+    chave = df["CPFCNPJPROPRIETARIO"].apply(_so_digitos)
+    df["VENDEDOR"] = chave.map(mapa).replace({"": np.nan, "nan": np.nan}).fillna("NÃO CADASTRADO")
+
+    # Colunas na mesma ordem da base (apaga as que a base não tem)
+    removidas = [c for c in df.columns if c not in colunas_base]
+    for c in colunas_base:
+        if c not in df.columns:
+            df[c] = np.nan
+    df = df[list(colunas_base)]
+
+    datas = pd.to_datetime(df["Data emplacamento"], dayfirst=True, errors="coerce")
+    resumo = {
+        "linhas_lidas": linhas_lidas,
+        "registros_validos": len(df),
+        "duplicados_no_arquivo": dup_internos,
+        "colunas_removidas": removidas,
+        "periodo": (datas.min(), datas.max()),
+        "com_vendedor": int((df["VENDEDOR"] != "NÃO CADASTRADO").sum()),
+        "por_vendedor": df["VENDEDOR"].value_counts().to_dict(),
+    }
+    return df, resumo
+
+def mesclar_com_base(base, novo):
+    """Junta, remove chassi repetido (fica o registro mais novo) e ordena por data."""
+    base = base.copy()
+    base["Chassi"] = base["Chassi"].astype(str).str.strip().str.upper()
+    dup_base = int(base["Chassi"].duplicated().sum())
+    ja_existiam = int(novo["Chassi"].isin(set(base["Chassi"])).sum())
+    tudo = pd.concat([base, novo], ignore_index=True)
+    tudo = tudo.drop_duplicates(subset=["Chassi"], keep="last")
+    _d = pd.to_datetime(tudo["Data emplacamento"], dayfirst=True, errors="coerce")
+    tudo = tudo.assign(_d=_d).sort_values("_d", kind="stable").drop(columns="_d").reset_index(drop=True)
+    stats = {
+        "total_antes": len(base),
+        "duplicados_antigos_removidos": dup_base,
+        "atualizados": ja_existiam,
+        "novos": len(novo) - ja_existiam,
+        "total_depois": len(tudo),
+    }
+    return tudo, stats
+
+def base_para_parquet(df):
+    """Padroniza tipos (texto x número) para gravar em Parquet sem erro."""
+    out = df.copy()
+    for c in out.columns:
+        if out[c].dtype == object:
+            out[c] = out[c].map(lambda v: v if (v is None or (isinstance(v, float) and np.isnan(v))) else str(v))
+    buf = BytesIO()
+    out.to_parquet(buf, index=False, compression="zstd")
+    return buf.getvalue()
+
+def ler_parquet_base(src):
+    df = pd.read_parquet(src)
+    for c in df.columns:
+        if str(df[c].dtype) in ("string", "str") or df[c].dtype == object:
+            df[c] = df[c].astype(object).where(df[c].notna(), np.nan)
+    return df
+
+
+def _gh_put_grande(repo, token, branch, caminho, conteudo, mensagem):
+    """Grava arquivo de qualquer tamanho (até 100 MB) via Git Data API. Retorna (ok, erro)."""
+    import urllib.request, urllib.error
+    def _api(metodo, url, corpo=None):
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{repo}{url}",
+            data=json.dumps(corpo).encode() if corpo is not None else None, method=metodo,
+            headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json",
+                     "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return json.loads(r.read().decode())
+    try:
+        ref = _api("GET", f"/git/ref/heads/{branch}")
+        base_commit = ref["object"]["sha"]
+        base_tree = _api("GET", f"/git/commits/{base_commit}")["tree"]["sha"]
+        blob = _api("POST", "/git/blobs", {"content": base64.b64encode(conteudo).decode(), "encoding": "base64"})
+        tree = _api("POST", "/git/trees", {"base_tree": base_tree,
+                    "tree": [{"path": caminho, "mode": "100644", "type": "blob", "sha": blob["sha"]}]})
+        commit = _api("POST", "/git/commits", {"message": mensagem, "tree": tree["sha"], "parents": [base_commit]})
+        _api("PATCH", f"/git/refs/heads/{branch}", {"sha": commit["sha"]})
+        return True, ""
+    except urllib.error.HTTPError as e:
+        try: msg = json.loads(e.read().decode()).get("message", str(e))
+        except Exception: msg = str(e)
+        return False, f"HTTP {e.code}: {msg}"
+    except Exception as e:
+        return False, str(e)
+
+@st.cache_resource(ttl=300, show_spinner=False)
+def _sincronizar_emp_remoto():
+    """Se a base oficial estiver num repositório de dados (GH_REPO), baixa a versão
+    mais nova para data/EMPLACAMENTOS.parquet. Checa no máximo a cada 5 min."""
+    import urllib.request
+    token, repo, branch = _gh_secrets()
+    if not (token and repo):
+        return None
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{repo}/contents/{EMP_REMOTE}?ref={branch}",
+            headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            meta = json.loads(r.read().decode())
+        sha_remoto = meta.get("sha", "")
+        marca = EMP_PARQUET + ".sha"
+        if os.path.exists(EMP_PARQUET) and os.path.exists(marca) and open(marca).read().strip() == sha_remoto:
+            return sha_remoto
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{repo}/contents/{EMP_REMOTE}?ref={branch}",
+            headers={"Authorization": f"token {token}", "Accept": "application/vnd.github.raw"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            dados = r.read()
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = EMP_PARQUET + ".tmp"
+        with open(tmp, "wb") as f:
+            f.write(dados)
+        os.replace(tmp, EMP_PARQUET)
+        with open(marca, "w") as f:
+            f.write(sha_remoto)
+        return sha_remoto
+    except Exception:
+        return None
+
+def _emp_fonte_atual():
+    _sincronizar_emp_remoto()
+    if os.path.exists(EMP_PARQUET):
+        return EMP_PARQUET
+    return EMP_FILE if os.path.exists(EMP_FILE) else None
+
+def _ler_base_emp_bruta():
+    fonte = _emp_fonte_atual()
+    if fonte is None:
+        return None
+    if fonte.endswith(".parquet"):
+        return ler_parquet_base(fonte)
+    return ler_planilha_bruta(fonte)
+
+def _load_emp_raw(src, label=""):
+    if isinstance(src, str) and src.endswith(".parquet"):
+        df = ler_parquet_base(src)
+    else:
+        df = ler_planilha_bruta(src)
 
     # Normalizar campos de texto essenciais
     for col in ["CPFCNPJPROPRIETARIO","NOMEPROPRIETARIO","NO_CIDADE","NO_BAIRRO",
@@ -1366,6 +1621,7 @@ def _load_emp_raw(src, label=""):
     df["Placa_norm"] = df["Placa"].str.replace("-","").str.replace(" ","").str.upper()
     df["NO_CIDADE_NORM"] = norm_str_series(df["NO_CIDADE"])
     df["NO_BAIRRO_NORM"] = norm_str_series(df["NO_BAIRRO"].fillna(""))
+    df["NOME_NORM"] = norm_str_series(df["NOMEPROPRIETARIO"].fillna(""))  # pré-calculado p/ a busca
 
     if "NU_CEP" in df.columns:
         # CEP: float(6529220.0) → int(6529220) → zfill → "06529220"
@@ -1925,8 +2181,9 @@ def carregar_dados_se_necessario():
     if st.session_state.df_cart is None and os.path.exists(CARTEIRA_FILE):
         st.session_state.df_cart = load_carteira(CARTEIRA_FILE)
         carregou = True
-    if not st.session_state.df_emp_list and os.path.exists(EMP_FILE):
-        df_def = load_emplacamentos(EMP_FILE, label="default")
+    _fonte_emp = _emp_fonte_atual()
+    if not st.session_state.df_emp_list and _fonte_emp:
+        df_def = load_emplacamentos(_fonte_emp, label="default")
         st.session_state.df_emp_list = [df_def]
         st.session_state.emp_fontes = ["default"]
         carregou = True
@@ -2180,6 +2437,10 @@ if pagina == "busca":
                 datas = edf["Data emplacamento"].dropna().tolist()
                 pred_label, pred_date = calc_prediction(datas)
                 nigris_cnt = int(is_denigris(edf["Concessionário"]).sum())
+                # mostra o resultado e guarda a busca (antes faltava → placa encontrada não aparecia)
+                st.session_state["busca_cnpj_sel"] = cnpj_sel
+                st.session_state["busca_linha_placa"] = linha_placa
+                _mostrar_resultado = True
             else:
                 # Não achou por placa — tenta por nome
                 _is_placa = False
@@ -2187,7 +2448,7 @@ if pagina == "busca":
         if not _is_placa:
             # Busca por nome ou CNPJ
             tokens = [t for t in q_norm.split() if len(t) >= 2]
-            nome_norm_series = norm_str_series(df_emp["NOMEPROPRIETARIO"])
+            nome_norm_series = df_emp["NOME_NORM"] if "NOME_NORM" in df_emp.columns else norm_str_series(df_emp["NOMEPROPRIETARIO"])
             if tokens:
                 mask_nome = pd.Series(True, index=df_emp.index)
                 for tok in tokens:
@@ -2541,39 +2802,11 @@ if pagina == "busca":
             cnpj_fmt = f"{cnpj_rf[:2]}.{cnpj_rf[2:5]}.{cnpj_rf[5:8]}/{cnpj_rf[8:12]}-{cnpj_rf[12:14]}" if len(cnpj_rf)==14 else cnpj_rf
 
             def _consultar_cnpj(cnpj14):
-                """Consulta CNPJ.ws → BrasilAPI → ReceitaWS (nessa ordem), com 1 nova tentativa
-                por fonte em caso de falha transitória (timeout/instabilidade)."""
-                import time
-                fontes = [
-                    f"https://publica.cnpj.ws/cnpj/{cnpj14}",
-                    f"https://brasilapi.com.br/api/cnpj/v1/{cnpj14}",
-                    f"https://www.receitaws.com.br/v1/cnpj/{cnpj14}",
-                ]
-                err = "Falha desconhecida"
-                for url in fontes:
-                    for tentativa in range(2):  # 1ª tentativa + 1 retry
-                        try:
-                            req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                            with _ur.urlopen(req, timeout=15) as r:
-                                data = json.loads(r.read().decode())
-                            # ReceitaWS retorna status="ERROR" com corpo 200 quando o CNPJ não existe
-                            if isinstance(data, dict) and data.get("status") == "ERROR":
-                                err = data.get("message", "CNPJ não encontrado")
-                                break  # não adianta tentar de novo na mesma fonte
-                            return data, ""
-                        except _ue.HTTPError as e:
-                            if e.code == 429:
-                                err = "Limite de consultas da API pública atingido (aguarde ~1 min e tente de novo)"
-                            elif e.code == 404:
-                                err = "CNPJ não encontrado nessa base"
-                                break  # 404 não muda com retry, pula pra próxima fonte
-                            else:
-                                err = f"HTTP {e.code}"
-                        except Exception as e:
-                            err = f"Instabilidade na conexão ({type(e).__name__})"
-                        if tentativa == 0:
-                            time.sleep(1.5)  # espera curta antes do retry
-                return None, err
+                """Usa o cache compartilhado entre TODOS os usuários (7 dias) antes de ir à internet."""
+                try:
+                    return _consultar_cnpj_publico(cnpj14), ""
+                except Exception as e:
+                    return None, str(e)
 
             def _parse_rf(d):
                 """Extrai campos normalizados do JSON (compatível cnpj.ws, brasilapi e receitaws)."""
@@ -3132,7 +3365,7 @@ elif pagina == "carteira":
             TotalCompras=("Chassi","count"),
             Nigris=("Concessionário", lambda x: is_denigris(x).sum()),
             UltimaCompra=("Data emplacamento","max"),
-            Marca=("Marca", lambda x: x.mode()[0] if not x.empty else "—"),
+            Marca=("Marca", _moda_segura),
         ).reset_index().sort_values("TotalCompras", ascending=False).head(20)
         top_c["% De Nigris"] = (top_c["Nigris"]/top_c["TotalCompras"]*100).round(0).astype(int).astype(str)+"%"
         top_c["UltimaCompra"] = pd.to_datetime(top_c["UltimaCompra"]).dt.strftime("%d/%m/%Y")
@@ -3576,7 +3809,7 @@ elif pagina == "oportunidades":
         conc_df = df_opp[~is_denigris(df_opp["Concessionário"])].copy()
         cs = conc_df.groupby(["CNPJ_NORM","NOMEPROPRIETARIO","NO_CIDADE"]).agg(
             Qtd=("Chassi","count"), UltimaConc=("Data emplacamento","max"),
-            PrincipalConc=("Concessionário", lambda x: x.mode()[0] if not x.empty else "—")
+            PrincipalConc=("Concessionário", _moda_segura)
         ).reset_index().sort_values("Qtd",ascending=False)
         cs["UltimaConc"] = pd.to_datetime(cs["UltimaConc"]).dt.strftime("%d/%m/%Y")
         cs = cs.drop(columns=["CNPJ_NORM"])
@@ -4262,11 +4495,69 @@ elif pagina == "admin":
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("""
         <div class="alert-blue">
-        💡 <strong>Como atualizar os dados:</strong> Substitua os arquivos diretamente no GitHub na pasta <code>data/</code> com os nomes:
-        <br>• <code>AREA_OPERACIONAL.xlsx</code> · <code>CARTEIRA.xlsx</code> · <code>EMPLACAMENTOS.xlsx</code>
-        <br>O sistema carrega automaticamente sem necessidade de upload.
+        💡 <strong>Como atualizar os dados:</strong> Emplacamentos → use o botão <b>Atualização semanal</b> abaixo
+        (seleciona o relatório de enriquecimento como veio, sem limpar nada).
+        <br>• <code>AREA_OPERACIONAL.xlsx</code> e <code>CARTEIRA.xlsx</code> continuam sendo substituídos no GitHub, pasta <code>data/</code>.
         </div>
         """, unsafe_allow_html=True)
+
+        # ══════════ ATUALIZAÇÃO SEMANAL AUTOMÁTICA ══════════
+        st.markdown('<div class="sec-title">🔄 Atualização semanal de Emplacamentos</div>', unsafe_allow_html=True)
+        st.caption("Selecione o relatório de enriquecimento exatamente como baixou. O app limpa, formata CNPJ, "
+                   "define o vendedor pela Carteira, remove chassi repetido e junta com a base.")
+        up_rel = st.file_uploader("Relatório de enriquecimento (.xlsx)", type=["xlsx"], key="up_relatorio_semanal")
+        if up_rel is not None:
+            try:
+                with st.spinner("Lendo e limpando o relatório..."):
+                    _base_bruta = _ler_base_emp_bruta()
+                    if _base_bruta is None:
+                        st.error("Base EMPLACAMENTOS não encontrada em data/."); st.stop()
+                    _novo, _res = preparar_relatorio(up_rel.getvalue(), df_cart, list(_base_bruta.columns))
+                    _tudo, _st = mesclar_com_base(_base_bruta, _novo)
+                _ini, _fim = _res["periodo"]
+                st.success(f"Relatório lido: {_res['registros_validos']} emplacamentos de "
+                           f"{_ini:%d/%m/%Y} a {_fim:%d/%m/%Y}.")
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Novos", f"{_st['novos']:,}".replace(",", "."))
+                m2.metric("Atualizados", f"{_st['atualizados']:,}".replace(",", "."))
+                m3.metric("Duplicados removidos", f"{_st['duplicados_antigos_removidos'] + _res['duplicados_no_arquivo']:,}".replace(",", "."))
+                m4.metric("Base final", f"{_st['total_depois']:,}".replace(",", "."))
+                with st.expander(f"Vendedor atribuído pela Carteira: {_res['com_vendedor']} de {_res['registros_validos']}"):
+                    st.dataframe(pd.DataFrame(list(_res["por_vendedor"].items()), columns=["Vendedor", "Emplacamentos"]),
+                                 hide_index=True, use_container_width=True)
+                if _res["colunas_removidas"]:
+                    st.caption("Colunas removidas: " + ", ".join(_res["colunas_removidas"]))
+
+                if st.button("✅ Confirmar e atualizar a base", type="primary", use_container_width=True, key="btn_confirma_emp"):
+                    with st.spinner("Salvando a base atualizada..."):
+                        _bytes = base_para_parquet(_tudo)
+                        os.makedirs(DATA_DIR, exist_ok=True)
+                        with open(EMP_PARQUET, "wb") as _f:
+                            _f.write(_bytes)
+                        _tk, _rp, _br = _gh_secrets()
+                        _ok, _err = (False, "GitHub não configurado nos secrets")
+                        if _tk and _rp:
+                            _ok, _err = _gh_put_grande(_rp, _tk, _br, EMP_REMOTE, _bytes,
+                                f"Atualiza EMPLACAMENTOS: +{_st['novos']} novos, {_st['atualizados']} atualizados (até {_fim:%d/%m/%Y})")
+                        # todos passam a ver a base nova sem esperar reinício
+                        _load_emp_base.clear()
+                        _sincronizar_emp_remoto.clear()
+                        if os.path.exists(EMP_PARQUET + ".sha"):
+                            os.remove(EMP_PARQUET + ".sha")
+                        st.session_state.df_emp_list = []
+                        st.session_state.emp_fontes = []
+                        st.session_state.dados_carregados = False
+                        st.session_state.pop("_emp_merged_len", None)
+                    if _ok:
+                        st.success("✅ Base atualizada e salva no GitHub. Já está valendo para todos.")
+                    else:
+                        st.warning(f"Base atualizada neste servidor, mas NÃO foi salva no GitHub ({_err}). "
+                                   "Ela some se o app reiniciar. Baixe o backup abaixo e confira o GH_TOKEN.")
+                    st.download_button("⬇️ Baixar base consolidada (backup .parquet)", _bytes,
+                                       file_name=f"EMPLACAMENTOS_{_fim:%Y%m%d}.parquet", key="dl_emp_parquet")
+            except Exception as _e:
+                st.error(f"Não consegui processar o relatório: {_e}")
+        st.markdown("<br>", unsafe_allow_html=True)
 
         st.markdown('<div class="sec-title">📤 Upload Manual (temporário)</div>', unsafe_allow_html=True)
         col_u1, col_u2 = st.columns(2)
@@ -4588,7 +4879,7 @@ elif pagina == "mapa":
     with kc1:
         st.markdown(f'<div class="kpi-card"><div class="kpi-label">Clientes Não Cadastrados no Mapa</div><div class="kpi-value" style="color:#C0392B;">{total_geo}</div></div>', unsafe_allow_html=True)
     with kc2:
-        n_exato = int(df_plot_geo["_endereco_exato"].sum()) if "_endereco_exato" in df_plot_geo.columns else 0
+        n_exato = int(df_plot_geo["_endereco_exato"].astype(bool).sum()) if (total_geo and "_endereco_exato" in df_plot_geo.columns) else 0
         st.markdown(f'<div class="kpi-card"><div class="kpi-label">Com Endereço Exato</div><div class="kpi-value" style="color:#1565C0;">{n_exato}/{total_geo}</div></div>', unsafe_allow_html=True)
     with kc3:
         vol_total = int(df_plot_geo["volume"].sum()) if total_geo else 0
@@ -4657,36 +4948,41 @@ elif pagina == "mapa":
     if st.session_state.get("_mapa_sig") == _mapa_sig and st.session_state.get("_mapa_obj") is not None:
         m = st.session_state["_mapa_obj"]
     else:
-        from folium.plugins import MarkerCluster
+        # FastMarkerCluster: os pinos e popups são montados no navegador a partir de uma lista
+        # compacta — 10x+ mais rápido que criar um folium.Marker por cliente no servidor.
+        from folium.plugins import FastMarkerCluster
+        import html as _html_m
         m = folium.Map(location=[centro_lat, centro_lon], zoom_start=10, tiles="CartoDB positron", prefer_canvas=True)
-        cluster = MarkerCluster(name="Clientes").add_to(m)
-
-        for c in clientes_json:
-            icon_color, icon_name = ("darkred", "exclamation-sign") if c["vol"] >= 10 else \
-                                     (("red", "exclamation-sign") if c["vol"] >= 5 else ("blue", "info-sign"))
-            selo_endereco = "📍 Endereço exato" if c["exato"] else "🏙️ Aproximado (centro da cidade)"
-            popup_html = f"""
-<div style="width:250px;font-family:'Segoe UI',sans-serif;">
-  <div style="font-size:13px;font-weight:700;color:#0a1628;margin-bottom:3px;">{c['nome']}</div>
-  <div style="font-size:10px;color:#8a95b0;font-family:monospace;margin-bottom:5px;">{c['cnpj']}</div>
-  <span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;margin-bottom:7px;background:#C0392B22;color:#C0392B;">⚠️ Não Cadastrado</span>
-  <div style="font-size:11px;color:#4a5568;margin-bottom:2px;">📍 <b>Endereço:</b> {c['endereco']}</div>
-  <div style="font-size:11px;color:#4a5568;margin-bottom:2px;">🏙️ <b>Cidade:</b> {c['cidade']}</div>
-  <div style="font-size:11px;color:#4a5568;margin-bottom:2px;">🚚 <b>Últ. Modelo:</b> {c['modelo']}</div>
-  <div style="font-size:11px;color:#4a5568;margin-bottom:6px;">📦 <b>Emplacamentos:</b> {c['vol']}</div>
-  <div style="font-size:10px;color:#8a95b0;margin-bottom:8px;">{selo_endereco}</div>
-  <div style="display:flex;gap:5px;margin-bottom:5px;">
-    <a href="{c['gmaps']}" target="_blank" style="flex:1;padding:8px 4px;background:#e8f0ff;color:#1a73e8;border-radius:6px;text-align:center;font-size:12px;font-weight:700;text-decoration:none;">🗺️ Google Maps</a>
-    <a href="{c['waze']}" target="_blank" style="flex:1;padding:8px 4px;background:#f0eaff;color:#7c3aed;border-radius:6px;text-align:center;font-size:12px;font-weight:700;text-decoration:none;">🚗 Waze</a>
-  </div>
-  <div style="font-size:10px;color:#8a95b0;text-align:center;">CNPJ para busca: <b>{c['cnpj_norm']}</b></div>
-</div>"""
-            folium.Marker(
-                location=[c["lat"], c["lon"]],
-                icon=folium.Icon(color=icon_color, icon=icon_name),
-                popup=folium.Popup(popup_html, max_width=270),
-                tooltip=f"{c['nome']} · {c['vol']} empl.",
-            ).add_to(cluster)
+        _esc = lambda v: _html_m.escape(str(v), quote=True)
+        _dados_mapa = [[c["lat"], c["lon"], _esc(c["nome"]), _esc(c["cnpj"]), _esc(c["cnpj_norm"]),
+                        _esc(c["cidade"]), _esc(c["endereco"]), _esc(c["modelo"]), int(c["vol"]),
+                        1 if c["exato"] else 0, _esc(c["gmaps"]), _esc(c["waze"])] for c in clientes_json]
+        _js_cb = """
+function (row) {
+  var vol = row[8];
+  var cor = vol >= 10 ? 'darkred' : (vol >= 5 ? 'red' : 'blue');
+  var ic = vol >= 5 ? 'exclamation-sign' : 'info-sign';
+  var icon = L.AwesomeMarkers.icon({icon: ic, markerColor: cor, prefix: 'glyphicon'});
+  var marker = L.marker(new L.LatLng(row[0], row[1]), {icon: icon});
+  var selo = row[9] ? '📍 Endereço exato' : '🏙️ Aproximado (centro da cidade)';
+  var h = '<div style="width:250px;font-family:Segoe UI,sans-serif;">'
+    + '<div style="font-size:13px;font-weight:700;color:#0a1628;margin-bottom:3px;">' + row[2] + '</div>'
+    + '<div style="font-size:10px;color:#8a95b0;font-family:monospace;margin-bottom:5px;">' + row[3] + '</div>'
+    + '<span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;margin-bottom:7px;background:#C0392B22;color:#C0392B;">⚠️ Não Cadastrado</span>'
+    + '<div style="font-size:11px;color:#4a5568;margin-bottom:2px;">📍 <b>Endereço:</b> ' + row[6] + '</div>'
+    + '<div style="font-size:11px;color:#4a5568;margin-bottom:2px;">🏙️ <b>Cidade:</b> ' + row[5] + '</div>'
+    + '<div style="font-size:11px;color:#4a5568;margin-bottom:2px;">🚚 <b>Últ. Modelo:</b> ' + row[7] + '</div>'
+    + '<div style="font-size:11px;color:#4a5568;margin-bottom:6px;">📦 <b>Emplacamentos:</b> ' + vol + '</div>'
+    + '<div style="font-size:10px;color:#8a95b0;margin-bottom:8px;">' + selo + '</div>'
+    + '<div style="display:flex;gap:5px;margin-bottom:5px;">'
+    + '<a href="' + row[10] + '" target="_blank" style="flex:1;padding:8px 4px;background:#e8f0ff;color:#1a73e8;border-radius:6px;text-align:center;font-size:12px;font-weight:700;text-decoration:none;">🗺️ Google Maps</a>'
+    + '<a href="' + row[11] + '" target="_blank" style="flex:1;padding:8px 4px;background:#f0eaff;color:#7c3aed;border-radius:6px;text-align:center;font-size:12px;font-weight:700;text-decoration:none;">🚗 Waze</a>'
+    + '</div><div style="font-size:10px;color:#8a95b0;text-align:center;">CNPJ para busca: <b>' + row[4] + '</b></div></div>';
+  marker.bindPopup(h, {maxWidth: 270});
+  marker.bindTooltip(row[2] + ' · ' + vol + ' empl.');
+  return marker;
+}"""
+        FastMarkerCluster(_dados_mapa, callback=_js_cb, name="Clientes").add_to(m)
 
         st.session_state["_mapa_obj"] = m
         st.session_state["_mapa_sig"] = _mapa_sig
