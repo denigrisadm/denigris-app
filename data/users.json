@@ -49,11 +49,11 @@
     "ultimo_acesso": "2026-08-31T11:48:35"
   },
   "ROSANGELA": {
-    "senha_hash": "ae2bd855be442a1284fc878aa5a074fc85b2acf54dc8b41294d2a7a354d2cb30",
+    "senha_hash": "pbkdf2$210000$4ee10058664dab50d60498420406c1fc$3f207d44eb9285b8ff1d98ca3fc03813d8a2bc56625b31df57643b852ed44334",
     "perfil": "vendedor",
     "nome": "Rosangela Caetano",
     "consultor_key": "ROSANGELA CAETANO",
-    "ultimo_acesso": "2026-08-31T11:18:43"
+    "ultimo_acesso": "2026-10-30T13:24:35"
   },
   "SUZAN": {
     "senha_hash": "1f9979ecde2f2735d7384365fc41f3b81bb6ae09cfe2d233865252976a50fa88",
