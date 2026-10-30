@@ -800,9 +800,45 @@ def gemini_api_key():
     cfg = st.session_state.get("app_config") or {}
     return cfg.get("gemini_api_key", "")
 
+MODELO_GEMINI_PADRAO = "gemini-3.8-flash"
+_MODELOS_APOSENTADOS = {"gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"}
+
+@st.cache_resource(show_spinner=False)
+def _modelo_gemini_ativo():
+    """Modelo descoberto automaticamente quando o configurado sai de linha (vale p/ todos os usuários)."""
+    return {}
+
 def gemini_modelo():
+    auto = _modelo_gemini_ativo().get("modelo")
+    if auto:
+        return auto
     cfg = st.session_state.get("app_config") or {}
-    return cfg.get("gemini_modelo", "gemini-2.5-flash")
+    m = (_secret("GEMINI_MODEL", "") or cfg.get("gemini_modelo") or MODELO_GEMINI_PADRAO).strip()
+    return MODELO_GEMINI_PADRAO if m in _MODELOS_APOSENTADOS else m
+
+def _versao_modelo(nome):
+    nums = re.findall(r"\d+(?:\.\d+)?", nome)
+    return float(nums[0]) if nums else 0.0
+
+def descobrir_modelo_flash(api_key):
+    """Lista os modelos liberados para a chave e escolhe o Flash estável mais novo."""
+    import urllib.request
+    req = urllib.request.Request("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
+                                 headers={"x-goog-api-key": api_key})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        data = json.loads(r.read().decode("utf-8"))
+    cands = []
+    for mod in data.get("models", []):
+        nome = mod.get("name", "").replace("models/", "")
+        metodos = mod.get("supportedGenerationMethods", [])
+        if "generateContent" not in metodos or "flash" not in nome:
+            continue
+        if any(x in nome for x in ("lite", "image", "tts", "audio", "live", "embedding", "exp", "preview", "thinking")):
+            continue
+        cands.append(nome)
+    if not cands:
+        return None
+    return sorted(cands, key=lambda n: (_versao_modelo(n), -len(n)), reverse=True)[0]
 
 def chamar_gemini(prompt, historico=None, temperature=0.4):
     """Chama a API do Gemini (generateContent). Retorna (texto_resposta, erro).
@@ -815,7 +851,6 @@ def chamar_gemini(prompt, historico=None, temperature=0.4):
     if not api_key:
         return None, "Chave da API Gemini não configurada. Peça ao gestor para cadastrar em Admin → Configurações."
     modelo = gemini_modelo()
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent"
 
     contents = []
     for turno in (historico or [])[-8:]:
@@ -825,16 +860,39 @@ def chamar_gemini(prompt, historico=None, temperature=0.4):
 
     payload = json.dumps({
         "contents": contents,
-        "generationConfig": {"temperature": temperature, "maxOutputTokens": 2048},
+        "generationConfig": {"temperature": temperature, "maxOutputTokens": 8192},
     }).encode("utf-8")
 
-    def _fazer_chamada():
+    def _uma_chamada(mod):
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{mod}:generateContent"
         req = urllib.request.Request(url, data=payload, method="POST",
                                       headers={"Content-Type": "application/json",
                                                "x-goog-api-key": api_key})
         with urllib.request.urlopen(req, timeout=25) as r:
             data = json.loads(r.read().decode("utf-8"))
-        return data["candidates"][0]["content"]["parts"][0]["text"]
+        cand = (data.get("candidates") or [{}])[0]
+        partes = (cand.get("content") or {}).get("parts") or []
+        texto = "".join(p.get("text", "") for p in partes if not p.get("thought"))
+        if not texto.strip():
+            raise RuntimeError(f"A IA não devolveu texto (motivo: {cand.get('finishReason', 'desconhecido')}).")
+        return texto
+
+    def _fazer_chamada():
+        try:
+            return _uma_chamada(modelo)
+        except urllib.error.HTTPError as e:
+            # Modelo aposentado/inexistente → descobre o Flash mais novo liberado e tenta de novo, sozinho
+            if e.code in (400, 404):
+                try:
+                    corpo = e.read().decode("utf-8", "ignore").lower()
+                except Exception:
+                    corpo = ""
+                if e.code == 404 or "not found" in corpo or "no longer available" in corpo:
+                    novo = descobrir_modelo_flash(api_key)
+                    if novo and novo != modelo:
+                        _modelo_gemini_ativo()["modelo"] = novo
+                        return _uma_chamada(novo)
+            raise
 
     try:
         ex = ThreadPoolExecutor(max_workers=1)
@@ -4736,13 +4794,13 @@ elif pagina == "admin":
         with st.form("form_gemini_cfg"):
             nova_key = st.text_input("Chave da API Gemini", value=cfg_atual.get("gemini_api_key",""), type="password",
                                       help="Gere em https://aistudio.google.com/apikey")
-            novo_modelo = st.text_input("Modelo", value=cfg_atual.get("gemini_modelo","gemini-2.5-flash"),
-                                        help="Ex: gemini-2.5-flash ou o nome exato que a Google indicar em caso de erro 404")
+            novo_modelo = st.text_input("Modelo", value=gemini_modelo(),
+                                        help="Padrão: gemini-3.8-flash. Se o Google aposentar o modelo, o app troca sozinho pelo Flash mais novo disponível.")
             salvar_cfg = st.form_submit_button("💾 Salvar configuração", use_container_width=True)
         if salvar_cfg:
             novo_cfg = dict(cfg_atual)
             novo_cfg["gemini_api_key"] = nova_key.strip()
-            novo_cfg["gemini_modelo"] = novo_modelo.strip() or "gemini-2.5-flash"
+            novo_cfg["gemini_modelo"] = novo_modelo.strip() or MODELO_GEMINI_PADRAO
             with st.spinner("Salvando e confirmando no GitHub..."):
                 ok_cfg, err_cfg = save_config(novo_cfg)
                 st.session_state.app_config = novo_cfg
