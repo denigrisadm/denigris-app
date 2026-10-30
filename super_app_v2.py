@@ -820,6 +820,31 @@ def _versao_modelo(nome):
     nums = re.findall(r"\d+(?:\.\d+)?", nome)
     return float(nums[0]) if nums else 0.0
 
+_CACHE_MODELOS = {}
+
+def modelos_flash_disponiveis(api_key):
+    """Todos os Flash estáveis liberados para a chave, do mais novo ao mais antigo; versões lite por último.
+    Cache simples de 6 h (roda dentro da thread da chamada, por isso não usa st.cache)."""
+    _c = _CACHE_MODELOS.get(api_key)
+    if _c and time.time() - _c[0] < 6 * 3600:
+        return _c[1]
+    import urllib.request
+    req = urllib.request.Request("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
+                                 headers={"x-goog-api-key": api_key})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        data = json.loads(r.read().decode("utf-8"))
+    cands = []
+    for mod in data.get("models", []):
+        nome = mod.get("name", "").replace("models/", "")
+        if "generateContent" not in mod.get("supportedGenerationMethods", []) or "flash" not in nome:
+            continue
+        if any(x in nome for x in ("image", "tts", "audio", "live", "embedding", "exp", "preview", "thinking")):
+            continue
+        cands.append(nome)
+    lista = sorted(cands, key=lambda n: ("lite" in n, -_versao_modelo(n), len(n)))
+    _CACHE_MODELOS[api_key] = (time.time(), lista)
+    return lista
+
 def descobrir_modelo_flash(api_key):
     """Lista os modelos liberados para a chave e escolhe o Flash estável mais novo."""
     import urllib.request
@@ -877,10 +902,34 @@ def chamar_gemini(prompt, historico=None, temperature=0.4):
             raise RuntimeError(f"A IA não devolveu texto (motivo: {cand.get('finishReason', 'desconhecido')}).")
         return texto
 
+    def _com_retentativa(mod, tentativas=2):
+        """Sobrecarga momentânea do Google (503/429/500): espera um pouco e tenta de novo."""
+        for t in range(tentativas):
+            try:
+                return _uma_chamada(mod)
+            except urllib.error.HTTPError as e:
+                if e.code in (429, 500, 503) and t < tentativas - 1:
+                    time.sleep(1.5 * (t + 1))
+                    continue
+                raise
+
     def _fazer_chamada():
         try:
-            return _uma_chamada(modelo)
+            return _com_retentativa(modelo)
         except urllib.error.HTTPError as e:
+            # Modelo lotado mesmo após nova tentativa → usa outro Flash disponível na chave
+            if e.code in (429, 500, 503):
+                try:
+                    alternativas = [m for m in modelos_flash_disponiveis(api_key) if m != modelo][:2]
+                except Exception:
+                    alternativas = []
+                for alt in alternativas:
+                    try:
+                        return _com_retentativa(alt, tentativas=1)
+                    except urllib.error.HTTPError as e2:
+                        if e2.code not in (429, 500, 503, 404):
+                            raise
+                raise
             # Modelo aposentado/inexistente → descobre o Flash mais novo liberado e tenta de novo, sozinho
             if e.code in (400, 404):
                 try:
@@ -912,6 +961,9 @@ def chamar_gemini(prompt, historico=None, temperature=0.4):
             msg_erro = corpo.get("error", {}).get("message", str(e))
         except Exception:
             msg_erro = str(e)
+        if e.code in (429, 500, 503):
+            return None, ("Os servidores do Google estão sobrecarregados agora (erro temporário). "
+                          "Já tentei de novo e também em outro modelo — aguarde 1 minuto e pergunte de novo.")
         return None, f"Erro da API Gemini ({e.code}): {msg_erro}"
     except Exception as e:
         return None, f"Falha ao chamar a IA: {e}"
