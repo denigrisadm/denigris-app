@@ -28,11 +28,11 @@
     "ultimo_acesso": "2026-08-25T16:58:09"
   },
   "JANAINA": {
-    "senha_hash": "92c721e582a08bf2a9897e0f3c606f61976efdaf16e65e79eccc7f3cf422ed17",
+    "senha_hash": "pbkdf2$210000$30aa07280a6a41677a2af2252fae855e$6a5bbaaf0c72f060896b8e06311c685800892745cbe0fbb432aad483f714d352",
     "perfil": "vendedor",
     "nome": "Janaina Broglio",
     "consultor_key": "JANAINA BROGLIO",
-    "ultimo_acesso": "2026-08-12T16:38:22"
+    "ultimo_acesso": "2026-11-03T10:13:21"
   },
   "LEONARDO": {
     "senha_hash": "a0ce073d8054fe1bb21b792266aba41130a430594264827a113d1bb3e9c85f8d",
