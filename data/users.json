@@ -84,11 +84,11 @@
     "ultimo_acesso": "2026-03-16T15:49:13"
   },
   "ANA": {
-    "senha_hash": "e408145e7fc3f031d5aa3b08710d0eddabf61cb11864822af9b16b92c0c9c576",
+    "senha_hash": "pbkdf2$210000$8037a7e5ab3e7c5340f1184c64ad9ae7$ef0f46b29192f879b1469ffda9d39a13c120c5b7837c4fbc9c18693d2190f5d7",
     "perfil": "gerente",
     "nome": "ANA CARLA",
     "consultor_key": "ANA",
-    "ultimo_acesso": "2026-07-24T10:18:47"
+    "ultimo_acesso": "2026-11-04T16:03:48"
   },
   "MARIANA": {
     "senha_hash": "2b4673952ce88b079d15911dda99cd132137bf9123b61963f8cd734c2b16f730",
