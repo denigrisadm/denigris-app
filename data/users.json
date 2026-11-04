@@ -105,11 +105,11 @@
     "ultimo_acesso": "2026-08-19T13:36:23"
   },
   "REGIANE": {
-    "senha_hash": "560a150cdff7699d1027c07ad0d6c4effbbf42d9bfcf32a6e3d87c8ac2100f13",
+    "senha_hash": "pbkdf2$210000$88814581d1cecffe2bc3c5b3ed4a2ea5$acd34f0919dd0cf9b5ab2f466e98505e7828b067c39ebba5fe8788368fc3f0eb",
     "perfil": "vendedor",
     "nome": "REGIANE INAMORATO",
     "consultor_key": "REGIANE INAMORATO",
-    "ultimo_acesso": "2026-08-17T14:54:52"
+    "ultimo_acesso": "2026-11-04T08:15:55"
   },
   "EDUARDO": {
     "senha_hash": "pbkdf2$210000$44af1ef6fe6a849b9278df153cf24000$263edc073ff9e7bdce257f5ab35107fac92eb31eb2ded3b01b590c7b4ada6316",
