@@ -14,11 +14,11 @@
     "ultimo_acesso": "2026-08-17T16:00:09"
   },
   "FRANCISCO": {
-    "senha_hash": "pbkdf2$210000$fd4498d87de2146d7d5f168340c0c506$c10532fab4644689a9409fbd70d09a1d01d8ce9037a6b1f29913551b2e6f8883",
+    "senha_hash": "pbkdf2$210000$2709918af3ff254dd2ee0f950949646b$b56630ba666014b7c2a169b8e352337957dd5bf781b11ff166df502fcc6edf72",
     "perfil": "vendedor",
     "nome": "Francisco Carlos Andrade",
     "consultor_key": "FRANCISCO CARLOS DE ANDRADE",
-    "ultimo_acesso": "2026-11-04T15:26:39"
+    "ultimo_acesso": "2026-11-04T15:26:40"
   },
   "GLADSTON": {
     "senha_hash": "1cda5da1d9897ff4f5c7be1529a708e792b4222385e99a1f42dc7fa8770f71c4",
