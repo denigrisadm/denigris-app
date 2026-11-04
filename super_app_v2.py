@@ -2702,6 +2702,53 @@ def _geo_gravar(store, cfg):
         store["sha"] = None
         store["erro"] = f"Localizações ficam só até o app reiniciar ({err})."
 
+# ════════════════════════════════════════════════════════════════
+# FUNDO GOOGLE MAPS (Map Tiles API oficial) — ativa com o secret GOOGLE_MAPS_KEY
+# ════════════════════════════════════════════════════════════════
+_APP_URL_REFERER = "https://emplacamentostrucks.streamlit.app/"
+
+@st.cache_resource(show_spinner=False, ttl=6 * 3600)
+def _google_tile_sessions(chave):
+    """Cria (e reaproveita por 6 h) as sessões de mapa do Google: ruas e satélite com nomes."""
+    out, erro = {}, ""
+    corpos = {"roadmap": {"mapType": "roadmap", "language": "pt-BR", "region": "BR"},
+              "satellite": {"mapType": "satellite", "language": "pt-BR", "region": "BR", "layerTypes": ["layerRoadmap"]}}
+    import urllib.request, urllib.error
+    for nome, corpo in corpos.items():
+        try:
+            req = urllib.request.Request(f"https://tile.googleapis.com/v1/createSession?key={chave}",
+                                         data=json.dumps(corpo).encode(), method="POST",
+                                         headers={"Content-Type": "application/json", "Referer": _APP_URL_REFERER})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                out[nome] = json.loads(r.read().decode()).get("session", "")
+        except urllib.error.HTTPError as e:
+            try: det = json.loads(e.read().decode()).get("error", {}).get("message", "")
+            except Exception: det = ""
+            erro = f"HTTP {e.code} {det}".strip()
+        except Exception as e:
+            erro = str(e)
+    return out, erro
+
+def camadas_google(m):
+    """Põe o Google Maps como fundo do mapa folium. Retorna (ok, mensagem)."""
+    chave = str(_secret("GOOGLE_MAPS_KEY", "") or "").strip()
+    if not chave:
+        return False, ""
+    sess, erro = _google_tile_sessions(chave)
+    if not sess.get("roadmap"):
+        _google_tile_sessions.clear()
+        return False, f"Não consegui abrir o Google Maps ({erro or 'sem sessão'}) — usando o mapa simples."
+    _attr = "Mapa © " + str(datetime.date.today().year) + " Google"
+    folium.TileLayer(tiles=f"https://tile.googleapis.com/v1/2dtiles/{{z}}/{{x}}/{{y}}?session={sess['roadmap']}&key={chave}",
+                     attr=_attr, name="Google Maps", max_zoom=21, max_native_zoom=21, show=True).add_to(m)
+    if sess.get("satellite"):
+        folium.TileLayer(tiles=f"https://tile.googleapis.com/v1/2dtiles/{{z}}/{{x}}/{{y}}?session={sess['satellite']}&key={chave}",
+                         attr=_attr, name="Google Satélite", max_zoom=21, max_native_zoom=21, show=False).add_to(m)
+    m.get_root().html.add_child(folium.Element(
+        '<img src="https://maps.gstatic.com/mapfiles/api-3/images/google_white5.png" alt="Google" '
+        'style="position:absolute;left:8px;bottom:22px;z-index:1000;height:18px;pointer-events:none;">'))
+    return True, ""
+
 def geo_garantir_ceps(ceps_prioritarios):
     """Põe na fila os CEPs ainda sem localização (na ordem recebida) e liga o trabalhador em segundo plano."""
     store = _geo_store()
@@ -5574,7 +5621,7 @@ elif pagina == "mapa":
         st.stop()
 
     centro_lat = float(ult["_lat"].median()); centro_lon = float(ult["_lon"].median())
-    _mapa_sig = hashlib.md5((mostrar_mapa + sel_vend_mapa + str(len(_cep_coords)) + "|".join(sorted(ult["CNPJ_NORM"].astype(str)))).encode()).hexdigest()
+    _mapa_sig = hashlib.md5((mostrar_mapa + sel_vend_mapa + str(bool(_secret("GOOGLE_MAPS_KEY", ""))) + str(len(_cep_coords)) + "|".join(sorted(ult["CNPJ_NORM"].astype(str)))).encode()).hexdigest()
 
     if st.session_state.get("_mapa_sig") == _mapa_sig and st.session_state.get("_mapa_obj") is not None:
         m = st.session_state["_mapa_obj"]
@@ -5651,7 +5698,12 @@ elif pagina == "mapa":
         _dic_lista = [None] * len(_dic)
         for k, v in _dic.items(): _dic_lista[v] = k
         m = folium.Map(location=[centro_lat, centro_lon], zoom_start=11, tiles=None, prefer_canvas=True, control_scale=True)
-        folium.TileLayer("CartoDB Voyager", name="Mapa", control=False).add_to(m)
+        _g_ok, _g_msg = camadas_google(m)
+        st.session_state["_mapa_google_msg"] = _g_msg if _g_ok is False else ""
+        folium.TileLayer("OpenStreetMap", name="Mapa simples", show=not _g_ok,
+                         overlay=False, control=_g_ok).add_to(m)
+        if _g_ok:
+            folium.LayerControl(position="topright", collapsed=False).add_to(m)
         _js_setup = ("<script>var __MAPA_DIC = " + json.dumps(_dic_lista, ensure_ascii=False) + ";</script>"
                      "<style>.dn-pop .leaflet-popup-content{margin:12px 14px;} .dn-pop .leaflet-popup-content-wrapper{border-radius:14px;}"
                      ".dn-h td{padding:3px 5px;border-bottom:1px solid #f0f0f2;font-size:11px;vertical-align:top;} .dn-h td:first-child,.dn-h td:last-child{white-space:nowrap;}"
@@ -5736,6 +5788,10 @@ function (row) {
         if st.button("🔄 Atualizar", key="mapa_refresh", use_container_width=True):
             st.session_state.pop("_mapa_obj", None); st.rerun()
 
+    if not str(_secret("GOOGLE_MAPS_KEY", "") or "").strip():
+        st.caption("🗺️ Fundo do Google Maps desligado: falta o secret GOOGLE_MAPS_KEY no Streamlit.")
+    elif st.session_state.get("_mapa_google_msg"):
+        st.caption("⚠️ " + st.session_state["_mapa_google_msg"])
     st_folium(m, width="100%", height=620, returned_objects=[], key="folium_mapa")
 
     st.info("💡 Clique num pino para abrir a ficha do cliente: histórico de compras, contatos com WhatsApp, sócios "
