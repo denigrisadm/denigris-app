@@ -56,11 +56,11 @@
     "ultimo_acesso": "2026-10-30T13:24:35"
   },
   "SUZAN": {
-    "senha_hash": "1f9979ecde2f2735d7384365fc41f3b81bb6ae09cfe2d233865252976a50fa88",
+    "senha_hash": "pbkdf2$210000$eaecf4aa36787222ae5e0be1b7d36bfc$44090d2a5e7ae5ba38c83e94fb3fafdc3e1a4affeb44e59652ddfd369e3eb86a",
     "perfil": "vendedor",
     "nome": "Suzan Oda",
     "consultor_key": "SUZAN ODA",
-    "ultimo_acesso": "2026-05-20T11:00:33"
+    "ultimo_acesso": "2026-11-04T15:28:11"
   },
   "VALMIR": {
     "senha_hash": "c118a34f9e426ba5749c784dc69d25ac6aa12ebd7ea698abc616fd57ee10b729",
