@@ -7,11 +7,11 @@
     "ultimo_acesso": "2026-10-30T13:54:52"
   },
   "CARLOS": {
-    "senha_hash": "ac9c2c34c9f7ad52528c3422af40a66e2e24aaf2a727831255413c9470158984",
+    "senha_hash": "pbkdf2$210000$f7bca69745bce669b1df207eed5ff1a2$b00073eebb0cbdaae4a4b4dd42cb313cf683431a58a84adb0f48bc68c92cad0e",
     "perfil": "vendedor",
     "nome": "Carlos Alberto Ferreira",
     "consultor_key": "CARLOS ALBERTO FERREIRA",
-    "ultimo_acesso": "2026-08-17T16:00:09"
+    "ultimo_acesso": "2026-11-04T15:52:35"
   },
   "FRANCISCO": {
     "senha_hash": "pbkdf2$210000$2709918af3ff254dd2ee0f950949646b$b56630ba666014b7c2a169b8e352337957dd5bf781b11ff166df502fcc6edf72",
