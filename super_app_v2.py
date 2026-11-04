@@ -2556,6 +2556,166 @@ def painel_acessos(USERS):
         else:
             st.info("Ainda não há acessos registrados desde a atualização.")
 
+# ════════════════════════════════════════════════════════════════
+# LOCALIZAÇÃO POR CEP — cada cliente vira um pino no ponto do seu CEP.
+# Busca em segundo plano (AwesomeAPI CEP, gratuita) e guarda no GitHub numa
+# branch separada ("cache-mapa") → não reinicia o app e não se perde.
+# ════════════════════════════════════════════════════════════════
+_GEO_BRANCH = "cache-mapa"
+_GEO_ARQ = "data/geo_ceps.json"
+_GEO_URL = "https://cep.awesomeapi.com.br/json/{cep}"
+_GEO_PAUSA = 0.35            # ~3 consultas por segundo
+_GEO_SALVAR_CADA = 150       # grava no GitHub a cada N CEPs novos
+
+def _gh_json_branch_ler(cfg, branch, caminho):
+    token, repo, _b = cfg
+    if not (token and repo):
+        return None, None
+    cod, js = _gh_api("GET", f"https://api.github.com/repos/{repo}/contents/{caminho}?ref={branch}", token)
+    if cod == 200:
+        try:
+            return json.loads(base64.b64decode(js["content"].replace("\n", "")).decode("utf-8")), js.get("sha")
+        except Exception:
+            pass
+    if cod == 200 and js.get("download_url"):   # arquivo > 1 MB: conteúdo vem pelo download_url
+        try:
+            import urllib.request
+            req = urllib.request.Request(js["download_url"], headers={"Authorization": f"token {token}"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return json.loads(r.read().decode("utf-8")), js.get("sha")
+        except Exception:
+            return None, None
+    return None, None
+
+def _gh_json_branch_gravar(cfg, branch, caminho, payload, sha, mensagem):
+    """Grava JSON numa branch separada (cria a branch se faltar). Retorna (ok, novo_sha, erro)."""
+    token, repo, base_branch = cfg
+    if not (token and repo):
+        return False, sha, "GitHub não configurado (GH_TOKEN)"
+    api = f"https://api.github.com/repos/{repo}"
+    cod, _ = _gh_api("GET", f"{api}/git/ref/heads/{branch}", token)
+    if cod == 404:
+        c2, ref = _gh_api("GET", f"{api}/git/ref/heads/{base_branch or 'main'}", token)
+        if c2 != 200:
+            return False, sha, f"HTTP {c2} ao ler a branch principal"
+        c3, r3 = _gh_api("POST", f"{api}/git/refs", token, {"ref": f"refs/heads/{branch}", "sha": ref["object"]["sha"]})
+        if c3 not in (200, 201):
+            return False, sha, f"HTTP {c3} ao criar a branch: {r3.get('message', '')}"
+    elif cod != 200:
+        return False, sha, f"HTTP {cod} ao ler a branch {branch}"
+    conteudo = base64.b64encode(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).decode()
+    for _t in range(2):
+        if sha is None:
+            c4, r4 = _gh_api("GET", f"{api}/contents/{caminho}?ref={branch}", token)
+            sha = r4.get("sha") if c4 == 200 else None
+        corpo = {"message": mensagem, "content": conteudo, "branch": branch}
+        if sha: corpo["sha"] = sha
+        c5, r5 = _gh_api("PUT", f"{api}/contents/{caminho}", token, corpo, timeout=30)
+        if c5 in (200, 201):
+            return True, r5.get("content", {}).get("sha"), ""
+        sha = None
+    return False, None, f"HTTP {c5}: {r5.get('message', '')}"
+
+@st.cache_resource(show_spinner=False)
+def _geo_store():
+    store = {"cep": {}, "sha": None, "lock": _threading.Lock(), "fila": [], "na_fila": set(),
+             "worker": None, "status": "", "erro": "", "novos": 0, "feitos_sessao": 0}
+    try:
+        dados, sha = _gh_json_branch_ler(_repo_acessos(), _GEO_BRANCH, _GEO_ARQ)
+        if isinstance(dados, dict):
+            store["cep"] = {k: v for k, v in dados.get("cep", {}).items()}
+            store["sha"] = sha
+    except Exception as e:
+        store["erro"] = f"Leitura do cache de CEPs: {e}"
+    return store
+
+def _geo_consultar_cep(cep8):
+    """→ [lat, lon] | 0 (CEP sem coordenada) | None (falha temporária) | 'limite' (429)."""
+    import urllib.request, urllib.error
+    try:
+        req = urllib.request.Request(_GEO_URL.format(cep=cep8), headers={"User-Agent": "DeNigris-App/1.0 (uso interno)"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            js = json.loads(r.read().decode("utf-8"))
+        la, lo = float(js.get("lat") or 0), float(js.get("lng") or 0)
+        if -34.5 < la < 5.5 and -74.5 < lo < -34.0:
+            return [round(la, 6), round(lo, 6)]
+        return 0
+    except urllib.error.HTTPError as e:
+        if e.code in (400, 404):
+            return 0
+        if e.code == 429:
+            return "limite"
+        return None
+    except Exception:
+        return None
+
+def _geo_worker(store, cfg):
+    falhas_seguidas = 0
+    pendentes_gravar = 0
+    try:
+        while True:
+            with store["lock"]:
+                if not store["fila"]:
+                    break
+                cep8 = store["fila"].pop(0)
+            res = _geo_consultar_cep(cep8)
+            if res == "limite":
+                with store["lock"]:
+                    store["fila"].insert(0, cep8)
+                store["status"] = "pausado (limite do serviço de CEP) — retoma sozinho"
+                time.sleep(90)
+                continue
+            if res is None:
+                falhas_seguidas += 1
+                with store["lock"]:
+                    store["na_fila"].discard(cep8)
+                if falhas_seguidas >= 25:
+                    store["erro"] = "Serviço de CEP indisponível agora — tento de novo na próxima abertura do mapa."
+                    break
+                time.sleep(2)
+                continue
+            falhas_seguidas = 0
+            with store["lock"]:
+                store["cep"][cep8] = res
+                store["na_fila"].discard(cep8)
+                store["novos"] += 1
+                store["feitos_sessao"] += 1
+            pendentes_gravar += 1
+            store["status"] = "localizando"
+            if pendentes_gravar >= _GEO_SALVAR_CADA:
+                _geo_gravar(store, cfg); pendentes_gravar = 0
+            time.sleep(_GEO_PAUSA)
+    finally:
+        if pendentes_gravar:
+            _geo_gravar(store, cfg)
+        store["status"] = "pronto" if not store["erro"] else store["status"]
+        store["worker"] = None
+
+def _geo_gravar(store, cfg):
+    with store["lock"]:
+        payload = {"atualizado_em": _agora_brt().strftime("%Y-%m-%dT%H:%M:%S"), "fonte": "awesomeapi-cep",
+                   "cep": dict(store["cep"])}
+    ok, sha, err = _gh_json_branch_gravar(cfg, _GEO_BRANCH, _GEO_ARQ, payload, store.get("sha"), "Cache de localização por CEP")
+    if ok:
+        store["sha"] = sha; store["erro"] = ""
+    else:
+        store["sha"] = None
+        store["erro"] = f"Localizações ficam só até o app reiniciar ({err})."
+
+def geo_garantir_ceps(ceps_prioritarios):
+    """Põe na fila os CEPs ainda sem localização (na ordem recebida) e liga o trabalhador em segundo plano."""
+    store = _geo_store()
+    with store["lock"]:
+        for c in ceps_prioritarios:
+            if c and c not in store["cep"] and c not in store["na_fila"]:
+                store["fila"].append(c); store["na_fila"].add(c)
+        if store["fila"] and store["worker"] is None:
+            store["erro"] = "" if "indisponível" in store["erro"] else store["erro"]
+            t = _threading.Thread(target=_geo_worker, args=(store, _repo_acessos()), daemon=True)
+            store["worker"] = t
+            t.start()
+    return store
+
 def registrar_acesso(login, migrar_hash_de=None):
     """Atualiza 'último acesso' em memória. Só grava no GitHub quando necessário
     (migração de senha) ou se PERSISTIR_ULTIMO_ACESSO=true nos secrets — no máximo 1x/dia.
@@ -5124,7 +5284,7 @@ elif pagina == "admin":
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 elif pagina == "mapa":
     st.markdown("""<div class="page-header"><h1>🗺️ Mapa de Inteligência</h1>
-    <p>Clientes não cadastrados · Prospecção de campo</p></div>""", unsafe_allow_html=True)
+    <p>Cada cliente é um pino · clique para ver histórico, contatos, sócios e rota</p></div>""", unsafe_allow_html=True)
 
     if df_emp is None:
         st.warning("⚠️ Carregue os dados na aba Admin → Gerenciar Dados")
@@ -5276,203 +5436,322 @@ elif pagina == "mapa":
         "RIO BRANCO": (-9.9753, -67.8249),
     }
 
-    def _coords_cidade(cidade_str):
+    def _coords_cidade(cidade_str, uf=""):
         if not cidade_str or str(cidade_str).strip() in ("", "nan", "None", "—"):
             return None
-        c = norm_str(str(cidade_str))
-        return COORDS_CIDADES.get(c)
+        p = _coord_cidade(cidade_str, uf or "SP", MUN_COORDS)
+        return p if p else COORDS_CIDADES.get(norm_str(str(cidade_str)))
 
-    # ── Base: clientes NÃO cadastrados (o mapa é só para isso, por desenho) ──
+    # ── Base do mapa ──
     cnpjs_carteira = set(df_cart["CNPJ_NORM"].dropna().tolist()) if df_cart is not None else set()
+    dono_carteira = {}
+    if df_cart is not None and "VENDEDOR" in df_cart.columns:
+        dono_carteira = df_cart.dropna(subset=["CNPJ_NORM"]).drop_duplicates("CNPJ_NORM").set_index("CNPJ_NORM")["VENDEDOR"].astype(str).str.strip().to_dict()
 
     if perfil == "vendedor" and df_area is not None:
         munic_m, cep_r_m = get_munic_area(cons_key, df_area)
         df_mapa_base = emp_da_area(df_emp, munic_m, cep_r_m, consultor=cons_key)
     else:
-        df_mapa_base = df_emp.copy()
+        df_mapa_base = df_emp
 
-    df_mapa_clientes = (
-        df_mapa_base.sort_values("Data emplacamento", ascending=False)
-        .groupby("CNPJ_NORM", as_index=False)
-        .first()
-    )
-    vol_series = df_mapa_base.groupby("CNPJ_NORM")["Chassi"].count()
-    df_mapa_clientes["volume"] = df_mapa_clientes["CNPJ_NORM"].map(vol_series).fillna(1).astype(int)
-    df_mapa_clientes["em_carteira"] = df_mapa_clientes["CNPJ_NORM"].isin(cnpjs_carteira)
-    df_plot = df_mapa_clientes[~df_mapa_clientes["em_carteira"]].copy()
-
-    # ── Filtros simples: busca por nome/CNPJ + cidade(s) ──
+    # ── Filtros ──
     st.markdown('<div class="sec-title">🔎 Filtros</div>', unsafe_allow_html=True)
-    col_f1, col_f2 = st.columns([2, 1])
+    col_f1, col_f2, col_f3 = st.columns([2, 1.2, 1.2])
     with col_f1:
-        busca_mapa = st.text_input("", placeholder="🔍  Buscar por nome ou CNPJ...",
+        busca_mapa = st.text_input("Buscar", placeholder="🔍  Buscar por nome ou CNPJ...",
                                    label_visibility="collapsed", key="mapa_busca")
     with col_f2:
-        cidades_mapa_disp = sorted(df_plot["NO_CIDADE"].dropna().unique().tolist())
+        mostrar_mapa = st.selectbox("Mostrar", ["Não cadastrados (oportunidade)", "Carteira De Nigris", "Todos os clientes"],
+                                    key="mapa_mostrar", label_visibility="collapsed")
+    with col_f3:
+        _vends_mapa = []
+        if perfil != "vendedor" and "RESP_KEYS" in df_mapa_base.columns:
+            _vends_mapa = sorted({k for s in df_mapa_base["RESP_KEYS"].dropna().unique() for k in str(s).strip("|").split("|") if k})
+        sel_vend_mapa = st.selectbox("Vendedor", ["Todos os vendedores"] + _vends_mapa, key="mapa_vendedor",
+                                     label_visibility="collapsed", disabled=(perfil == "vendedor"))
+
+    base_f = df_mapa_base
+    if sel_vend_mapa != "Todos os vendedores" and "RESP_KEYS" in base_f.columns:
+        base_f = base_f[base_f["RESP_KEYS"].fillna("").str.contains("|" + sel_vend_mapa + "|", regex=False)]
+
+    # um registro por cliente (o emplacamento mais recente) + volume
+    ult = base_f.sort_values("Data emplacamento", ascending=False).drop_duplicates("CNPJ_NORM").copy()
+    ult["volume"] = ult["CNPJ_NORM"].map(base_f.groupby("CNPJ_NORM")["Chassi"].count()).fillna(1).astype(int)
+    ult["em_carteira"] = ult["CNPJ_NORM"].isin(cnpjs_carteira)
+    if mostrar_mapa.startswith("Não"):
+        ult = ult[~ult["em_carteira"]]
+    elif mostrar_mapa.startswith("Carteira"):
+        ult = ult[ult["em_carteira"]]
+
+    cidades_mapa_disp = sorted(ult["NO_CIDADE"].dropna().astype(str).unique().tolist())
+    col_c1, col_c2 = st.columns([3, 1])
+    with col_c1:
         sel_cidades_mapa = st.multiselect("Cidade(s)", cidades_mapa_disp, default=[], key="mapa_cidades",
-                                           placeholder="Todas as cidades")
-
+                                          placeholder="Todas as cidades", label_visibility="collapsed")
+    with col_c2:
+        vol_min_mapa = st.number_input("Mín. emplacamentos", min_value=1, value=1, step=1, key="mapa_volmin",
+                                       label_visibility="collapsed", help="Mostrar só clientes com pelo menos N emplacamentos")
     if busca_mapa.strip():
-        q_m = norm_str(busca_mapa.strip())
-        q_cnpj_m = re.sub(r"\D", "", busca_mapa.strip())
-        mask_nome_m = norm_str_series(df_plot["NOMEPROPRIETARIO"]).str.contains(q_m, na=False, regex=False)
-        mask_cnpj_m = df_plot["CNPJ_NORM"].str.startswith(q_cnpj_m) if q_cnpj_m else pd.Series(False, index=df_plot.index)
-        df_plot = df_plot[mask_nome_m | mask_cnpj_m]
+        q_m = norm_str(busca_mapa.strip()); q_cnpj_m = re.sub(r"\D", "", busca_mapa.strip())
+        mask_m = norm_str_series(ult["NOMEPROPRIETARIO"].fillna("")).str.contains(q_m, na=False, regex=False)
+        if q_cnpj_m:
+            mask_m = mask_m | ult["CNPJ_NORM"].astype(str).str.startswith(q_cnpj_m)
+        ult = ult[mask_m]
     if sel_cidades_mapa:
-        df_plot = df_plot[df_plot["NO_CIDADE"].isin(sel_cidades_mapa)]
+        ult = ult[ult["NO_CIDADE"].isin(sel_cidades_mapa)]
+    if vol_min_mapa > 1:
+        ult = ult[ult["volume"] >= vol_min_mapa]
 
-    # ── Coordenadas: usa endereço exato já geocodificado (cache existente, leitura local — sem chamada de rede)
-    #     e cai para o centro da cidade quando não há endereço exato ainda. Sem botão de geocodificação ao vivo:
-    #     era a parte lenta/instável da página (dependia de serviço externo respondendo na hora do clique). ──
-    _end_cache = _load_endereco_cache()
-
-    def _coords_cliente(row):
-        cnpj_n = row.get("CNPJ_NORM", "")
-        if cnpj_n and cnpj_n in _end_cache and _end_cache[cnpj_n]:
-            return tuple(_end_cache[cnpj_n])
-        return _coords_cidade(row.get("NO_CIDADE", ""))
-
-    df_plot["_coords"] = df_plot.apply(_coords_cliente, axis=1)
-    df_plot["_endereco_exato"] = df_plot["CNPJ_NORM"].apply(
-        lambda cn: bool(cn and cn in _end_cache and _end_cache[cn])
-    )
-
-    df_plot_sem_geo = df_plot[df_plot["_coords"].isna()]
-    df_plot_geo = df_plot[df_plot["_coords"].notna()].copy()
-    df_plot_geo["_lat"] = df_plot_geo["_coords"].apply(lambda x: x[0])
-    df_plot_geo["_lon"] = df_plot_geo["_coords"].apply(lambda x: x[1])
-
-    total_geo = len(df_plot_geo)
-    sem_coords = len(df_plot_sem_geo)
-
-    kc1, kc2, kc3 = st.columns(3)
-    with kc1:
-        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Clientes Não Cadastrados no Mapa</div><div class="kpi-value" style="color:#C0392B;">{total_geo}</div></div>', unsafe_allow_html=True)
-    with kc2:
-        n_exato = int(df_plot_geo["_endereco_exato"].astype(bool).sum()) if (total_geo and "_endereco_exato" in df_plot_geo.columns) else 0
-        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Com Endereço Exato</div><div class="kpi-value" style="color:#1565C0;">{n_exato}/{total_geo}</div></div>', unsafe_allow_html=True)
-    with kc3:
-        vol_total = int(df_plot_geo["volume"].sum()) if total_geo else 0
-        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Total Emplacamentos</div><div class="kpi-value">{vol_total}</div></div>', unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    if sem_coords > 0:
-        st.caption(f"ℹ️ {sem_coords} cliente(s) ocultados — cidade não mapeada nas coordenadas conhecidas.")
-
-    if df_plot_geo.empty:
+    if ult.empty:
         st.info("Nenhum cliente encontrado para os filtros selecionados.")
         st.stop()
 
-    # ── Preparar dados para os marcadores ──
-    import urllib.parse as _urlp_m
-    clientes_json = []
-    for _, row in df_plot_geo.iterrows():
-        nome_c   = safe_str(row.get("NOMEPROPRIETARIO", ""))
-        cnpj_c   = safe_str(row.get("CPFCNPJPROPRIETARIO", ""))
-        cnpj_n   = safe_str(row.get("CNPJ_NORM", ""))
-        cidade_c = safe_str(row.get("NO_CIDADE", ""))
-        modelo_c = safe_str(row.get("Modelo", ""))
-        vol_c    = int(row.get("volume", 1))
-        lat_c    = float(row["_lat"])
-        lon_c    = float(row["_lon"])
-        exato_c  = bool(row.get("_endereco_exato", False))
-        endereco_c = montar_endereco_cliente(row) or cidade_c
+    # ── Localização: CEP (pino na rua/quadra) → bairro (capital) → cidade ──
+    ult["_cep8"] = ult["NU_CEP"].map(norm_cep) if "NU_CEP" in ult.columns else ""
+    _ord_ceps = ult.sort_values("volume", ascending=False)["_cep8"].tolist()
+    geo = geo_garantir_ceps([c for c in dict.fromkeys(_ord_ceps) if c and len(c) == 8 and c != "00000000"])
+    with geo["lock"]:
+        _cep_coords = dict(geo["cep"])
+    _end_cache = _load_endereco_cache()
 
-        cor = "#8B0000" if vol_c >= 10 else ("#e53935" if vol_c >= 5 else "#1565C0")
+    def _loc(row):
+        cn = row["CNPJ_NORM"]
+        if cn in _end_cache and _end_cache[cn]:
+            return tuple(_end_cache[cn]), 2
+        c8 = row["_cep8"]
+        v = _cep_coords.get(c8)
+        if v:
+            return (v[0], v[1]), 1
+        p = _coord_setor(_cep_int(c8)) if c8 else None
+        if p:
+            return p, 0
+        p = _coords_cidade(row.get("NO_CIDADE", ""), row.get("SG_ESTADO", ""))
+        return (p, 0) if p else (None, -1)
 
-        if exato_c:
-            gmaps_url = f"https://www.google.com/maps/search/?api=1&query={lat_c},{lon_c}"
-            waze_url  = f"https://waze.com/ul?ll={lat_c},{lon_c}&navigate=yes"
-        else:
-            addr_enc  = _urlp_m.quote(f"{nome_c}, {cidade_c}, Brasil")
-            gmaps_url = f"https://www.google.com/maps/search/?api=1&query={addr_enc}"
-            waze_url  = f"https://waze.com/ul?q={addr_enc}"
+    _locs = [ _loc(r) for r in ult[["CNPJ_NORM", "_cep8", "NO_CIDADE", "SG_ESTADO"]].to_dict("records") ]
+    ult["_coords"] = [l[0] for l in _locs]; ult["_prec"] = [l[1] for l in _locs]
+    sem_geo = int((ult["_prec"] < 0).sum())
+    ult = ult[ult["_prec"] >= 0].copy()
 
-        clientes_json.append({
-            "nome": nome_c, "cnpj": cnpj_c, "cnpj_norm": cnpj_n, "cidade": cidade_c,
-            "endereco": endereco_c, "modelo": modelo_c, "vol": vol_c,
-            "lat": lat_c, "lon": lon_c, "cor": cor, "exato": exato_c,
-            "gmaps": gmaps_url, "waze": waze_url,
-        })
+    # espalha levemente quem cai no mesmo ponto (mesmo CEP / centro de bairro) — determinístico por CNPJ
+    def _espalhar(cn, coord, prec):
+        h = int(hashlib.md5(str(cn).encode()).hexdigest()[:8], 16)
+        ang = (h % 3600) / 3600 * 2 * math.pi
+        raio_m = (15 + (h >> 12) % 45) if prec >= 1 else (250 + (h >> 12) % 1500)
+        dlat = raio_m / 111_320 * math.cos(ang)
+        dlon = raio_m / (111_320 * max(math.cos(math.radians(coord[0])), 0.2)) * math.sin(ang)
+        return coord[0] + dlat, coord[1] + dlon
+    _pts = [_espalhar(cn, c, p) for cn, c, p in zip(ult["CNPJ_NORM"], ult["_coords"], ult["_prec"])]
+    ult["_lat"] = [p[0] for p in _pts]; ult["_lon"] = [p[1] for p in _pts]
+
+    total_geo = len(ult)
+    n_cep = int((ult["_prec"] >= 1).sum())
+    kc1, kc2, kc3, kc4 = st.columns(4)
+    with kc1:
+        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Clientes no mapa</div><div class="kpi-value">{total_geo:,}</div></div>'.replace(",", "."), unsafe_allow_html=True)
+    with kc2:
+        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Pino no CEP do cliente</div><div class="kpi-value" style="color:#0071e3;">{n_cep:,}</div></div>'.replace(",", "."), unsafe_allow_html=True)
+    with kc3:
+        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Não cadastrados</div><div class="kpi-value" style="color:#d93025;">{int((~ult["em_carteira"]).sum()):,}</div></div>'.replace(",", "."), unsafe_allow_html=True)
+    with kc4:
+        st.markdown(f'<div class="kpi-card"><div class="kpi-label">Emplacamentos</div><div class="kpi-value">{int(ult["volume"].sum()):,}</div></div>'.replace(",", "."), unsafe_allow_html=True)
+
+    _faltam = int(len(geo["fila"]))
+    if _faltam:
+        st.caption(f"📍 Localizando {_faltam:,} CEP(s) em segundo plano — os pinos ficam mais precisos sozinhos. "
+                   "Clique em 🔄 para ver o progresso.".replace(",", "."))
+    if geo.get("erro"):
+        st.caption("⚠️ " + geo["erro"])
+    if sem_geo:
+        st.caption(f"ℹ️ {sem_geo} cliente(s) sem CEP nem cidade reconhecida ficaram fora do mapa.")
 
     try:
         import folium
+        from folium.plugins import FastMarkerCluster
         from streamlit_folium import st_folium
-        _folium_ok = True
     except ImportError:
-        _folium_ok = False
-
-    if not _folium_ok:
         st.error("⚠️ Instale as dependências do mapa: `pip install folium streamlit-folium`")
-        st.code("pip install folium streamlit-folium", language="bash")
         st.stop()
 
-    centro_lat = sum(c["lat"] for c in clientes_json) / len(clientes_json)
-    centro_lon = sum(c["lon"] for c in clientes_json) / len(clientes_json)
-
-    # ── Cache do mapa: só reconstrói quando os dados realmente mudam (evita travar em cada clique) ──
-    _mapa_sig = hashlib.md5(
-        ("|".join(sorted(c["cnpj_norm"] for c in clientes_json))).encode()
-    ).hexdigest()
+    centro_lat = float(ult["_lat"].median()); centro_lon = float(ult["_lon"].median())
+    _mapa_sig = hashlib.md5((mostrar_mapa + sel_vend_mapa + str(len(_cep_coords)) + "|".join(sorted(ult["CNPJ_NORM"].astype(str)))).encode()).hexdigest()
 
     if st.session_state.get("_mapa_sig") == _mapa_sig and st.session_state.get("_mapa_obj") is not None:
         m = st.session_state["_mapa_obj"]
     else:
-        # FastMarkerCluster: os pinos e popups são montados no navegador a partir de uma lista
-        # compacta — 10x+ mais rápido que criar um folium.Marker por cliente no servidor.
-        from folium.plugins import FastMarkerCluster
-        import html as _html_m
-        m = folium.Map(location=[centro_lat, centro_lon], zoom_start=10, tiles="CartoDB positron", prefer_canvas=True)
-        _esc = lambda v: _html_m.escape(str(v), quote=True)
-        _dados_mapa = [[c["lat"], c["lon"], _esc(c["nome"]), _esc(c["cnpj"]), _esc(c["cnpj_norm"]),
-                        _esc(c["cidade"]), _esc(c["endereco"]), _esc(c["modelo"]), int(c["vol"]),
-                        1 if c["exato"] else 0, _esc(c["gmaps"]), _esc(c["waze"])] for c in clientes_json]
-        _js_cb = """
+        # ── Ficha de cada cliente (histórico, contatos, sócios) — montada no navegador só ao clicar ──
+        _cnpjs_sel = set(ult["CNPJ_NORM"])
+        hist_df = base_f[base_f["CNPJ_NORM"].isin(_cnpjs_sel)][["CNPJ_NORM", "Data emplacamento", "Modelo", "Concessionário", "Placa"]].copy()
+        hist_df["_dn"] = is_denigris(hist_df["Concessionário"]).astype(int)
+        hist_df = hist_df.sort_values("Data emplacamento", ascending=False)
+        _dic = {}
+        def _ix(v):
+            v = safe_str(v, "—")
+            if v not in _dic: _dic[v] = len(_dic)
+            return _dic[v]
+        hist_df["_d"] = pd.to_datetime(hist_df["Data emplacamento"], errors="coerce").dt.strftime("%d/%m/%y").fillna("—")
+        _cache_ix = {}
+        def _ix_rapido(v):
+            if v not in _cache_ix: _cache_ix[v] = _ix(v)
+            return _cache_ix[v]
+        hist_df["_m"] = [ _ix_rapido(v) for v in hist_df["Modelo"].tolist() ]
+        hist_df["_c"] = [ _ix_rapido(v) for v in hist_df["Concessionário"].tolist() ]
+        hist_df["_p"] = hist_df["Placa"].fillna("").astype(str).replace({"nan": "", "None": ""})
+        _MAX_HIST = 12
+        _tot_por = hist_df.groupby("CNPJ_NORM").size().to_dict()
+        _dn_por = hist_df.groupby("CNPJ_NORM")["_dn"].sum().astype(int).to_dict()
+        _hh = hist_df[hist_df.groupby("CNPJ_NORM").cumcount() < _MAX_HIST]
+        _hist_por = {}
+        for cn, d_, m_, c_, p_, n_ in zip(_hh["CNPJ_NORM"].tolist(), _hh["_d"].tolist(), _hh["_m"].tolist(),
+                                         _hh["_c"].tolist(), _hh["_p"].tolist(), _hh["_dn"].tolist()):
+            _hist_por.setdefault(cn, []).append([d_, int(m_), int(c_), p_, int(n_)])
+
+        def _fones(r, pares):
+            out = []
+            for d_, n_ in pares:
+                num = make_fone_num(r.get(d_), r.get(n_))
+                if num and num not in out: out.append(num)
+            return out
+
+        def _socios(r):
+            out = []
+            for i in (1, 2, 3):
+                nome_s = safe_str(r.get(f"NOME_SOCIO_DIRETOR{i}", ""), "")
+                if not nome_s: continue
+                cel = make_fone_num(r.get(f"DDD1_CEL_SOCIO{i}"), r.get(f"TEL1_CEL_SOCIO{i}"))
+                fixo = make_fone_num(r.get(f"DDD1_FIXO_SOCIO{i}"), r.get(f"TEL1_FIXO_SOCIO{i}"))
+                out.append([nome_s.title(), safe_str(r.get(f"CARGO{i}", ""), ""), cel, fixo,
+                            safe_str(r.get(f"EMAIL_SOCIO{i}", ""), "")])
+            return out
+
+        _dados_mapa = []
+        for r in ult.to_dict("records"):
+            cn = r["CNPJ_NORM"]
+            if r["em_carteira"]:
+                situ = "Carteira · " + str(dono_carteira.get(cn, "")).title()
+            else:
+                situ = "Não cadastrado"
+            resp = str(r.get("RESP_KEYS", "") or "").strip("|").replace("|", " / ").title()
+            email = safe_str(r.get("EMAIL", ""), "")
+            _dados_mapa.append([
+                round(r["_lat"], 6), round(r["_lon"], 6),
+                safe_str(r.get("NOMEPROPRIETARIO", ""), "—"), safe_str(r.get("CPFCNPJPROPRIETARIO", ""), ""),
+                1 if r["em_carteira"] else 0, situ, resp,
+                montar_endereco_completo(r) or safe_str(r.get("NO_CIDADE", ""), ""),
+                0,
+                int(r["volume"]), _tot_por.get(cn, int(r["volume"])), _dn_por.get(cn, 0),
+                int(r["_prec"]),
+                _fones(r, [("DDD_CELULAR1", "CELULAR1"), ("DDD_CELULAR2", "CELULAR2"), ("DDD_CELULAR3", "CELULAR3")]),
+                _fones(r, [(f"DDD{i}", f"TELEFONE{i}") for i in range(1, 6)]),
+                email if "@" in email else "",
+                _socios(r),
+                _hist_por.get(cn, []),
+                safe_str(r.get("NOME_FANTASIA", ""), ""), _ix(safe_str(r.get("ATIVIDADE_ECONOMICA", ""), "")[:90]) if safe_str(r.get("ATIVIDADE_ECONOMICA", ""), "") else -1,
+            ])
+        _dic_lista = [None] * len(_dic)
+        for k, v in _dic.items(): _dic_lista[v] = k
+        m = folium.Map(location=[centro_lat, centro_lon], zoom_start=11, tiles=None, prefer_canvas=True, control_scale=True)
+        folium.TileLayer("CartoDB Voyager", name="Mapa", control=False).add_to(m)
+        _js_setup = ("<script>var __MAPA_DIC = " + json.dumps(_dic_lista, ensure_ascii=False) + ";</script>"
+                     "<style>.dn-pop .leaflet-popup-content{margin:12px 14px;} .dn-pop .leaflet-popup-content-wrapper{border-radius:14px;}"
+                     ".dn-h td{padding:3px 5px;border-bottom:1px solid #f0f0f2;font-size:11px;vertical-align:top;} .dn-h td:first-child,.dn-h td:last-child{white-space:nowrap;}"
+                     ".dn-btn{flex:1;padding:8px 4px;border-radius:8px;text-align:center;font-size:12px;font-weight:700;text-decoration:none;}"
+                     "</style>")
+        m.get_root().header.add_child(folium.Element(_js_setup))
+        _js_cb = r"""
 function (row) {
-  var vol = row[8];
-  var cor = vol >= 10 ? 'darkred' : (vol >= 5 ? 'red' : 'blue');
-  var ic = vol >= 5 ? 'exclamation-sign' : 'info-sign';
-  var icon = L.AwesomeMarkers.icon({icon: ic, markerColor: cor, prefix: 'glyphicon'});
+  function fmt(n){n=String(n||'').replace(/^55/,'');var d=n.slice(0,2),r=n.slice(2);return '('+d+') '+(r.length>8?r.slice(0,r.length-4)+'-'+r.slice(-4):r.slice(0,4)+'-'+r.slice(4));}
+  function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+  var cart = row[4] === 1, vol = row[9];
+  var cor = cart ? '#1a73e8' : (vol >= 10 ? '#a50e0e' : '#ea4335');
+  var tam = vol >= 10 ? 34 : (vol >= 3 ? 30 : 26);
+  var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="'+tam+'" height="'+Math.round(tam*1.4)+'" viewBox="0 0 24 34">'
+    + '<path d="M12 0C5.4 0 0 5.3 0 11.9 0 20.8 12 34 12 34s12-13.2 12-22.1C24 5.3 18.6 0 12 0z" fill="'+cor+'" stroke="#fff" stroke-width="1.4"/>'
+    + '<circle cx="12" cy="12" r="4.6" fill="#fff" fill-opacity=".95"/></svg>';
+  var icon = L.divIcon({html: svg, className: '', iconSize: [tam, Math.round(tam*1.4)], iconAnchor: [tam/2, Math.round(tam*1.4)], popupAnchor: [0, -Math.round(tam*1.3)]});
   var marker = L.marker(new L.LatLng(row[0], row[1]), {icon: icon});
-  var selo = row[9] ? '📍 Endereço exato' : '🏙️ Aproximado (centro da cidade)';
-  var h = '<div style="width:250px;font-family:Segoe UI,sans-serif;">'
-    + '<div style="font-size:13px;font-weight:700;color:#1d1d1f;margin-bottom:3px;">' + row[2] + '</div>'
-    + '<div style="font-size:10px;color:#86868b;font-family:monospace;margin-bottom:5px;">' + row[3] + '</div>'
-    + '<span style="display:inline-block;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;margin-bottom:7px;background:#C0392B22;color:#C0392B;">⚠️ Não Cadastrado</span>'
-    + '<div style="font-size:11px;color:#515154;margin-bottom:2px;">📍 <b>Endereço:</b> ' + row[6] + '</div>'
-    + '<div style="font-size:11px;color:#515154;margin-bottom:2px;">🏙️ <b>Cidade:</b> ' + row[5] + '</div>'
-    + '<div style="font-size:11px;color:#515154;margin-bottom:2px;">🚚 <b>Últ. Modelo:</b> ' + row[7] + '</div>'
-    + '<div style="font-size:11px;color:#515154;margin-bottom:6px;">📦 <b>Emplacamentos:</b> ' + vol + '</div>'
-    + '<div style="font-size:10px;color:#86868b;margin-bottom:8px;">' + selo + '</div>'
-    + '<div style="display:flex;gap:5px;margin-bottom:5px;">'
-    + '<a href="' + row[10] + '" target="_blank" style="flex:1;padding:8px 4px;background:#e8f0ff;color:#1a73e8;border-radius:6px;text-align:center;font-size:12px;font-weight:700;text-decoration:none;">🗺️ Google Maps</a>'
-    + '<a href="' + row[11] + '" target="_blank" style="flex:1;padding:8px 4px;background:#f0eaff;color:#7c3aed;border-radius:6px;text-align:center;font-size:12px;font-weight:700;text-decoration:none;">🚗 Waze</a>'
-    + '</div><div style="font-size:10px;color:#86868b;text-align:center;">CNPJ para busca: <b>' + row[4] + '</b></div></div>';
-  marker.bindPopup(h, {maxWidth: 270});
-  marker.bindTooltip(row[2] + ' · ' + vol + ' empl.');
+  marker.bindTooltip(esc(row[2]) + ' · ' + vol + ' empl.', {direction: 'top', offset: [0, -Math.round(tam*1.2)]});
+  marker.bindPopup(function () {
+    var D = window.__MAPA_DIC || [];
+    var gq = encodeURIComponent(String(row[7]).replace('CEP: ', ''));
+    var h = '<div style="width:320px;font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1d1d1f;">';
+    h += '<div style="font-size:14px;font-weight:700;line-height:1.25;">' + esc(row[2]) + '</div>';
+    if (row[18]) h += '<div style="font-size:11px;color:#6e6e73;">' + esc(row[18]) + '</div>';
+    h += '<div style="font-size:11px;color:#86868b;font-family:monospace;margin:2px 0 6px;">' + esc(row[3]) + '</div>';
+    h += '<span style="display:inline-block;padding:2px 9px;border-radius:20px;font-size:10px;font-weight:700;background:' + (cart ? '#e8f0fe;color:#1a73e8' : '#fce8e6;color:#c5221f') + ';">' + (cart ? '📋 ' : '⚠️ ') + esc(row[5]) + '</span>';
+    if (row[6]) h += ' <span style="font-size:10px;color:#515154;">👤 Responsável: <b>' + esc(row[6]) + '</b></span>';
+    h += '<div style="font-size:11px;color:#3a3a3c;margin:8px 0 2px;">📍 ' + esc(row[7]) + '</div>';
+    if (row[19] >= 0) h += '<div style="font-size:10px;color:#86868b;margin-bottom:4px;">🏭 ' + esc(D[row[19]]) + '</div>';
+    h += '<div style="font-size:10px;color:#86868b;margin-bottom:8px;">' + (row[12] >= 1 ? '🎯 Pino no CEP do cliente' : '🏙️ Pino aproximado (bairro/cidade) — o Google Maps mostra o endereço exato') + '</div>';
+    h += '<div style="display:flex;gap:6px;margin-bottom:8px;">'
+       + '<a class="dn-btn" target="_blank" href="https://www.google.com/maps/search/?api=1&query=' + gq + '" style="background:#e8f0fe;color:#1a73e8;">🗺️ Google Maps</a>'
+       + '<a class="dn-btn" target="_blank" href="https://www.google.com/maps/dir/?api=1&destination=' + gq + '" style="background:#e6f4ea;color:#137333;">🧭 Rota</a>'
+       + '<a class="dn-btn" target="_blank" href="https://waze.com/ul?q=' + gq + '&navigate=yes" style="background:#f3e8fd;color:#7c3aed;">🚗 Waze</a></div>';
+    var cont = '';
+    (row[13] || []).forEach(function (n) { cont += '<a target="_blank" href="https://wa.me/' + n + '" style="display:inline-block;margin:0 4px 4px 0;padding:3px 8px;border-radius:12px;background:#e7f8ee;color:#128c4a;font-size:11px;font-weight:600;text-decoration:none;">💬 ' + esc(fmt(n))  + '</a>'; });
+    (row[14] || []).forEach(function (n) { cont += '<a href="tel:+' + n + '" style="display:inline-block;margin:0 4px 4px 0;padding:3px 8px;border-radius:12px;background:#f2f2f7;color:#1d1d1f;font-size:11px;text-decoration:none;">📞 ' + esc(fmt(n))  + '</a>'; });
+    if (row[15]) cont += '<a href="mailto:' + esc(row[15]) + '" style="display:inline-block;margin:0 4px 4px 0;padding:3px 8px;border-radius:12px;background:#f2f2f7;color:#1d1d1f;font-size:11px;text-decoration:none;">✉️ ' + esc(row[15]) + '</a>';
+    if (cont) h += '<div style="font-size:11px;font-weight:700;margin-bottom:3px;">Contatos</div><div>' + cont + '</div>';
+    if ((row[16] || []).length) {
+      h += '<div style="font-size:11px;font-weight:700;margin:6px 0 3px;">Sócios / decisores</div>';
+      row[16].forEach(function (s) {
+        h += '<div style="font-size:11px;margin-bottom:4px;">👤 <b>' + esc(s[0]) + '</b>' + (s[1] ? ' · ' + esc(s[1]) : '');
+        if (s[2]) h += ' <a target="_blank" href="https://wa.me/' + s[2] + '" style="color:#128c4a;text-decoration:none;font-weight:600;">💬 ' + esc(fmt(s[2]))  + '</a>';
+        if (s[3]) h += ' <a href="tel:+' + s[3] + '" style="color:#1d1d1f;text-decoration:none;">📞 ' + esc(fmt(s[3]))  + '</a>';
+        if (s[4]) h += '<br><span style="color:#6e6e73;">✉️ ' + esc(s[4]) + '</span>';
+        h += '</div>';
+      });
+    }
+    var tot = row[10], dn = row[11];
+    h += '<div style="font-size:11px;font-weight:700;margin:8px 0 3px;">Histórico de compras · ' + tot + ' emplacamento(s) · '
+       + '<span style="color:#137333;">' + dn + ' De Nigris</span> · <span style="color:#c5221f;">' + (tot - dn) + ' concorrente</span></div>';
+    h += '<div style="max-height:170px;overflow:auto;border:1px solid #f0f0f2;border-radius:8px;"><table class="dn-h" style="border-collapse:collapse;width:100%;">';
+    h += '<tr style="background:#f5f5f7;font-weight:700;"><td>Data</td><td>Modelo</td><td>Concessionária</td><td>Placa</td></tr>';
+    (row[17] || []).forEach(function (e) {
+      h += '<tr><td>' + esc(e[0]) + '</td><td>' + esc(D[e[1]]) + '</td><td style="color:' + (e[4] ? '#137333' : '#c5221f') + ';">' + (e[4] ? '✅ ' : '') + esc(String(D[e[2]]||'').slice(0, 30)) + '</td><td>' + esc(e[3]) + '</td></tr>';
+    });
+    h += '</table></div>';
+    if (tot > (row[17] || []).length) h += '<div style="font-size:10px;color:#86868b;margin-top:3px;">Mostrando as ' + row[17].length + ' mais recentes — histórico completo na aba Busca.</div>';
+    h += '</div>';
+    return h;
+  }, {maxWidth: 360, minWidth: 320, className: 'dn-pop', autoPanPadding: [20, 20]});
   return marker;
 }"""
-        FastMarkerCluster(_dados_mapa, callback=_js_cb, name="Clientes").add_to(m)
-
+        FastMarkerCluster(_dados_mapa, callback=_js_cb, name="Clientes",
+                          options={"disableClusteringAtZoom": 15, "maxClusterRadius": 45,
+                                   "spiderfyOnMaxZoom": True, "showCoverageOnHover": False}).add_to(m)
+        if len(ult) <= 400:
+            m.fit_bounds([[float(ult["_lat"].min()), float(ult["_lon"].min())], [float(ult["_lat"].max()), float(ult["_lon"].max())]])
         st.session_state["_mapa_obj"] = m
         st.session_state["_mapa_sig"] = _mapa_sig
 
-    st_folium(m, width="100%", height=560, returned_objects=[], key="folium_mapa")
+    lg1, lg2 = st.columns([5, 1])
+    with lg1:
+        st.markdown('<div style="font-size:12px;color:#515154;margin:2px 0 6px;">'
+                    '<span style="color:#ea4335;font-size:16px;">●</span> Não cadastrado &nbsp; '
+                    '<span style="color:#a50e0e;font-size:16px;">●</span> Não cadastrado com 10+ emplacamentos &nbsp; '
+                    '<span style="color:#1a73e8;font-size:16px;">●</span> Carteira De Nigris &nbsp;·&nbsp; '
+                    'pino maior = mais emplacamentos · aproxime o zoom para ver cada cliente</div>', unsafe_allow_html=True)
+    with lg2:
+        if st.button("🔄 Atualizar", key="mapa_refresh", use_container_width=True):
+            st.session_state.pop("_mapa_obj", None); st.rerun()
 
-    st.info(
-        "💡 **Dica:** Clique num marcador para ver o popup — endereço, último modelo e emplacamentos. "
-        "Os botões Google Maps e Waze abrem a rota direto no celular."
-    )
+    st_folium(m, width="100%", height=620, returned_objects=[], key="folium_mapa")
 
-    with st.expander(f"📋 Lista completa ({total_geo} clientes no mapa)", expanded=False):
-        cols_show = [c for c in ["NOMEPROPRIETARIO","CPFCNPJPROPRIETARIO","NO_CIDADE","Modelo","volume"] if c in df_plot_geo.columns]
-        df_show = df_plot_geo[cols_show].copy()
-        rename_m = {"NOMEPROPRIETARIO":"Cliente","CPFCNPJPROPRIETARIO":"CNPJ","NO_CIDADE":"Cidade","Modelo":"Último Modelo","volume":"Emplacamentos"}
-        df_show.columns = [rename_m.get(c, c) for c in cols_show]
-        st.dataframe(df_show, use_container_width=True, hide_index=True)
-        buf_m = BytesIO()
-        df_show.to_excel(buf_m, index=False, engine="openpyxl")
-        buf_m.seek(0)
+    st.info("💡 Clique num pino para abrir a ficha do cliente: histórico de compras, contatos com WhatsApp, sócios "
+            "e os botões **Google Maps**, **Rota** e **Waze** com o endereço completo.")
+
+    with st.expander(f"📋 Lista completa ({total_geo:,} clientes no mapa)".replace(",", "."), expanded=False):
+        df_show = ult[["NOMEPROPRIETARIO", "CPFCNPJPROPRIETARIO", "NO_CIDADE", "Modelo", "volume"]].copy()
+        df_show["Situação"] = ult["em_carteira"].map({True: "Carteira", False: "Não cadastrado"})
+        df_show["Endereço"] = ult.apply(montar_endereco_completo, axis=1)
+        df_show["Google Maps"] = ult.apply(lambda r: "https://www.google.com/maps/search/?api=1&query="
+                                           + __import__("urllib.parse").parse.quote(montar_endereco_cliente(r) or ""), axis=1)
+        df_show = df_show.rename(columns={"NOMEPROPRIETARIO": "Cliente", "CPFCNPJPROPRIETARIO": "CNPJ", "NO_CIDADE": "Cidade",
+                                          "Modelo": "Último Modelo", "volume": "Emplacamentos"})
+        st.dataframe(df_show, use_container_width=True, hide_index=True,
+                     column_config={"Google Maps": st.column_config.LinkColumn("Google Maps", display_text="Abrir 🗺️")})
+        buf_m = BytesIO(); df_show.to_excel(buf_m, index=False, engine="openpyxl"); buf_m.seek(0)
         st.download_button("📥 Exportar lista", buf_m, file_name="clientes_mapa.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
