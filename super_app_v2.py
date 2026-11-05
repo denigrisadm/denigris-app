@@ -68,8 +68,13 @@ CONFIG_FILE   = os.path.join(DATA_DIR, "config.json")
 NOMES_DENIGRIS = ["COMERCIAL DE VEICULOS DE NIGRIS LTDA"]
 REGEX_DENIGRIS = "|".join([re.escape(n) for n in NOMES_DENIGRIS])
 
+# Comparação "compacta" (só letras): pega "...DE NIGRIS LTD", "...LTDA.", "COMERCIALDEVEICULOSDENIGRISLTDA" etc.
+# Só a Comercial de Veículos De Nigris é "nossa". A De Nigris Distribuidora é CONCORRENTE (confirmado pelo gestor em 05/11/2026).
+_RX_DN_COMPACTO = "COMERCIALDEVEICULOSDENIGRIS"
+
 def is_denigris(serie):
-    return serie.astype(str).str.upper().str.contains(REGEX_DENIGRIS, na=False, regex=True)
+    s = serie.astype(str).str.upper().str.replace(r"[^A-Z]", "", regex=True)
+    return s.str.contains(_RX_DN_COMPACTO, na=False, regex=True)
 
 MESES_PT = {1:"Janeiro",2:"Fevereiro",3:"Março",4:"Abril",5:"Maio",6:"Junho",
             7:"Julho",8:"Agosto",9:"Setembro",10:"Outubro",11:"Novembro",12:"Dezembro"}
@@ -4518,7 +4523,7 @@ elif pagina == "oportunidades":
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 elif pagina == "vendedor360":
     st.markdown("""<div class="page-header"><h1>🧭 Vendedor 360</h1>
-    <p>Carteira · Área operacional · Radar de propensão · Prospecção presencial</p></div>""", unsafe_allow_html=True)
+    <p>Raio-X da área · Vendas perdidas · Carteira parada · Plano de ataque semanal</p></div>""", unsafe_allow_html=True)
 
     if df_emp is None or df_area is None:
         st.warning("⚠️ Dados de emplacamento/área não carregados."); st.stop()
@@ -4705,14 +4710,101 @@ elif pagina == "vendedor360":
     n_fora    = (~radar_base["Na Carteira"]).sum() if not radar_base.empty else 0
     munic_lbl = " · ".join(m.title() for m in munic_v[:3]) + (f" +{len(munic_v)-3}" if len(munic_v) > 3 else "") if munic_v else "—"
 
-    st.markdown('<div class="kpi-grid">', unsafe_allow_html=True)
-    k1,k2,k3,k4,k5 = st.columns(5)
-    with k1: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Área Operacional</div><div class="kpi-value" style="font-size:14px;">{munic_lbl}</div></div>', unsafe_allow_html=True)
-    with k2: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Clientes no Radar</div><div class="kpi-value">{len(radar_base)}</div></div>', unsafe_allow_html=True)
-    with k3: st.markdown(f'<div class="kpi-card"><div class="kpi-label">🔥 Quentes</div><div class="kpi-value green">{n_quentes}</div></div>', unsafe_allow_html=True)
-    with k4: st.markdown(f'<div class="kpi-card"><div class="kpi-label">🟡 Mornos</div><div class="kpi-value blue">{n_mornos}</div></div>', unsafe_allow_html=True)
-    with k5: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Fora da Carteira</div><div class="kpi-value red">{n_fora}</div></div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+    # ══════════════════════════════════════════════════════════
+    # RAIO-X DA ÁREA — o que está acontecendo no território no período
+    # ══════════════════════════════════════════════════════════
+    _per_opts = {"Últimos 12 meses": 12, "Últimos 6 meses": 6, "Últimos 3 meses": 3, "Últimos 24 meses": 24}
+    _cper1, _cper2 = st.columns([1, 3])
+    with _cper1:
+        sel_per_v = st.selectbox("Período de análise", list(_per_opts), key="v360_periodo")
+    meses_p = _per_opts[sel_per_v]
+    ini_p = today - pd.DateOffset(months=meses_p)
+
+    univ_p = df_univ_v[df_univ_v["Data emplacamento"] >= ini_p]
+    if sel_cidades:
+        univ_p = univ_p[univ_p["NO_CIDADE"].isin(sel_cidades)]
+    _dn_area = is_denigris(univ_p["Concessionário"]) if not univ_p.empty else pd.Series(dtype=bool)
+    n_area_p = len(univ_p); n_dn_p = int(_dn_area.sum()); n_conc_p = n_area_p - n_dn_p
+    share_p = round(n_dn_p / n_area_p * 100, 1) if n_area_p else 0.0
+    _mb_area = univ_p["Marca"].astype(str).str.upper().str.contains("BENZ", na=False) if not univ_p.empty else pd.Series(dtype=bool)
+    n_mb_p = int(_mb_area.sum())
+    share_mb_p = round(n_dn_p / n_mb_p * 100, 1) if n_mb_p else 0.0
+    n_perd_mb = int((_mb_area & ~_dn_area).sum()) if not univ_p.empty else 0
+
+    # compras de cada cliente no período (base inteira — o cliente conta mesmo comprando fora da área)
+    _cnpjs_cli = set(radar_base["CNPJ_NORM"]) if not radar_base.empty else set()
+    _cnpjs_cli |= cnpjs_minha_cart_v
+    emp_cli_p = df_emp[(df_emp["Data emplacamento"] >= ini_p) & df_emp["CNPJ_NORM"].isin(_cnpjs_cli)].copy()
+    emp_cli_p["_dn"] = is_denigris(emp_cli_p["Concessionário"]).astype(int)
+    agg_p = emp_cli_p.groupby("CNPJ_NORM").agg(Compras_P=("Chassi", "count"), DN_P=("_dn", "sum"))
+    agg_p["Conc_P"] = agg_p["Compras_P"] - agg_p["DN_P"]
+    _conc_rows = emp_cli_p[emp_cli_p["_dn"] == 0]
+    agg_p["Concorrente_P"] = _conc_rows.groupby("CNPJ_NORM")["Concessionário"].agg(_moda_segura)
+    agg_p["Modelos_Conc_P"] = _conc_rows.groupby("CNPJ_NORM")["Modelo"].agg(
+        lambda x: ", ".join(map(str, pd.unique(x.dropna())[:3])))
+    agg_p["Ult_Conc_P"] = _conc_rows.groupby("CNPJ_NORM")["Data emplacamento"].max()
+
+    if not radar_base.empty:
+        # empresas do próprio grupo De Nigris (ex.: De Nigris Locação) não são oportunidade
+        radar_base = radar_base[~radar_base["Nome"].astype(str).str.upper().str.contains(r"\bDE ?NIGRIS\b", regex=True, na=False)]
+        radar_base = radar_base.merge(agg_p, left_on="CNPJ_NORM", right_index=True, how="left")
+        for _c in ("Compras_P", "DN_P", "Conc_P"):
+            radar_base[_c] = radar_base[_c].fillna(0).astype(int)
+        for _c in ("Concorrente_P", "Modelos_Conc_P"):
+            radar_base[_c] = radar_base[_c].fillna("—")
+
+    _cart_compraram = set(agg_p.index[agg_p["Compras_P"] > 0]) & cnpjs_minha_cart_v
+    _cart_conc = set(agg_p.index[agg_p["Conc_P"] > 0]) & cnpjs_minha_cart_v
+    n_veic_cart_conc = int(agg_p.loc[list(_cart_conc), "Conc_P"].sum()) if _cart_conc else 0
+    n_cart_parada = len(cnpjs_minha_cart_v) - len(_cart_compraram)
+    _compradores = set(univ_p["CNPJ_NORM"].dropna())
+    n_comp_cart = len(_compradores & cnpjs_minha_cart_v); n_comp_fora = len(_compradores) - n_comp_cart
+
+    st.markdown(f'<div class="sec-title">🛰️ Raio-X da área — {sel_per_v.lower()}</div>', unsafe_allow_html=True)
+    rx1, rx2, rx3, rx4, rx5, rx6 = st.columns(6)
+    _fmt = lambda n: f"{int(n):,}".replace(",", ".")
+    with rx1: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Emplacamentos na área</div><div class="kpi-value">{_fmt(n_area_p)}</div><div class="kpi-sub">{munic_lbl}</div></div>', unsafe_allow_html=True)
+    with rx2: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Market share De Nigris</div><div class="kpi-value green">{share_p}%</div><div class="kpi-sub">{_fmt(n_dn_p)} nossos · {share_mb_p}% das Mercedes</div></div>', unsafe_allow_html=True)
+    with rx3: st.markdown(f'<div class="kpi-card"><div class="kpi-label">💸 Vendas perdidas</div><div class="kpi-value red">{_fmt(n_conc_p)}</div><div class="kpi-sub">{_fmt(n_perd_mb)} Mercedes em outra concessionária</div></div>', unsafe_allow_html=True)
+    with rx4: st.markdown(f'<div class="kpi-card"><div class="kpi-label">Clientes comprando</div><div class="kpi-value">{_fmt(len(_compradores))}</div><div class="kpi-sub">{_fmt(n_comp_cart)} da carteira · {_fmt(n_comp_fora)} fora</div></div>', unsafe_allow_html=True)
+    with rx5: st.markdown(f'<div class="kpi-card"><div class="kpi-label">🚨 Carteira na concorrência</div><div class="kpi-value red">{_fmt(len(_cart_conc))}</div><div class="kpi-sub">{_fmt(n_veic_cart_conc)} veículos perdidos</div></div>', unsafe_allow_html=True)
+    with rx6: st.markdown(f'<div class="kpi-card"><div class="kpi-label">💤 Carteira parada</div><div class="kpi-value red">{_fmt(n_cart_parada)}</div><div class="kpi-sub">de {_fmt(len(cnpjs_minha_cart_v))} sem comprar no período</div></div>', unsafe_allow_html=True)
+
+    # ── Plano de ataque: cada cliente ganha um motivo e uma prioridade ──
+    _BASE_PRIO = {"🚨 Recuperar": 60, "📝 Cadastrar": 50, "🆕 Conquistar": 45, "⏰ Recompra": 40, "💤 Reativar": 25, "🔵 Monitorar": 0}
+    def _categoria(r):
+        if r["Na Carteira"] and r["Conc_P"] > 0: return "🚨 Recuperar"
+        if (not r["Na Carteira"]) and r["DN_P"] > 0: return "📝 Cadastrar"
+        if (not r["Na Carteira"]) and r["Compras_P"] > 0: return "🆕 Conquistar"
+        if r["Status"] == "🔥 Quente": return "⏰ Recompra"
+        if r["Na Carteira"] and r["Compras_P"] == 0: return "💤 Reativar"
+        return "🔵 Monitorar"
+    def _por_que(r):
+        c = r["Categoria"]
+        ult_c = pd.Timestamp(r["Ult_Conc_P"]).strftime("%m/%Y") if pd.notna(r.get("Ult_Conc_P")) else "—"
+        if c == "🚨 Recuperar":
+            return (f"Está na SUA carteira, mas emplacou {r['Conc_P']} veículo(s) na concorrência ({r['Concorrente_P']}) "
+                    f"nos {sel_per_v.lower()} — último em {ult_c}: {r['Modelos_Conc_P']}.")
+        if c == "📝 Cadastrar":
+            return (f"Comprou {r['DN_P']} veículo(s) com a De Nigris nos {sel_per_v.lower()} mas NÃO está na carteira — "
+                    f"cadastre e assuma o relacionamento antes que outro vendedor ou concorrente assuma.")
+        if c == "🆕 Conquistar":
+            return (f"Não é cadastrado e emplacou {r['Compras_P']} veículo(s) nos {sel_per_v.lower()}, "
+                    f"principalmente na {r['Concorrente_P']} ({r['Modelos_Conc_P']}). Frota ativa na sua área.")
+        if c == "⏰ Recompra":
+            return r["Motivo"]
+        if c == "💤 Reativar":
+            return (f"Cliente da sua carteira sem emplacar há {r['Meses Sem Comprar']} meses — "
+                    f"{r['Total Compras']} compra(s) no histórico, última {r['Último Modelo']} ({r['Última Concessionária']}).")
+        return r["Motivo"]
+    if not radar_base.empty:
+        radar_base["Categoria"] = radar_base.apply(_categoria, axis=1)
+        radar_base["Prioridade"] = (radar_base["Categoria"].map(_BASE_PRIO).fillna(0)
+                                    + 15 * np.log1p(radar_base["Conc_P"])
+                                    + 6 * np.log1p(radar_base["Compras_P"])
+                                    + 4 * np.log1p(radar_base["Total Compras"])
+                                    + radar_base["Score"] * 0.2).round(1)
+        radar_base["Por Quê Agora"] = radar_base.apply(_por_que, axis=1)
 
     # ── Check-in opcional: cruza com data da última visita ──
     with st.expander("📅 Importar check-ins (visitas presenciais) — opcional"):
@@ -4742,7 +4834,7 @@ elif pagina == "vendedor360":
         "Última Compra","Meses Sem Comprar","Total Compras","Último Modelo","Última Concessionária",
         "Comprou De Nigris Antes","Marca Preferida","Modelo Preferido","Previsão","Motivo",
         "Sócio/Decisor Principal","Cargo Decisor","Todos os Sócios","Tel. Decisor","Tel. Geral","E-mail",
-        "Histórico Completo",
+        "Histórico Completo", "Categoria", "Por Quê Agora", "Prioridade", "Conc_P", "Concorrente_P", "Modelos_Conc_P",
     ]
 
     def _exportar_xlsx(df_exp, filename, label, key_extra=""):
@@ -4756,7 +4848,138 @@ elif pagina == "vendedor360":
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                            key=f"dl_{filename}_{key_extra}")
 
-    tab_cart, tab_r1, tab_r2, tab_r3 = st.tabs(["📋 Minha Carteira", "🏆 Maiores Clientes", "📡 Radar Completo", "📆 Prospecção (4 semanas × 12)"])
+    tab_plano, tab_perdidas, tab_cart, tab_r2, tab_r1 = st.tabs(["🎯 Plano de Ataque (4 semanas)", "💸 Vendas Perdidas", "📋 Minha Carteira", "📡 Radar Completo", "🏆 Maiores Clientes"])
+
+    # ══════════════════════════════════════════════════════════
+    # ABA: PLANO DE ATAQUE — 4 semanas × 12, priorizado por oportunidade real
+    # ══════════════════════════════════════════════════════════
+    with tab_plano:
+        if radar_base.empty:
+            st.info("Sem clientes no radar para este filtro.")
+        else:
+            _cats_ord = ["🚨 Recuperar", "📝 Cadastrar", "🆕 Conquistar", "⏰ Recompra", "💤 Reativar", "🔵 Monitorar"]
+            _cont = radar_base["Categoria"].value_counts()
+            st.markdown(
+                '<div class="alert-blue">🎯 <b>Como a lista é montada:</b> cada cliente recebe um motivo — 🚨 <b>recuperar</b> (é da sua carteira e '
+                'comprou na concorrência), 📝 <b>cadastrar</b> (comprou com a De Nigris mas não está na carteira), 🆕 <b>conquistar</b> '
+                '(frota ativa não cadastrada), ⏰ <b>recompra</b> (o ciclo de compra indica que está na hora) e 💤 <b>reativar</b> '
+                '(carteira parada). A ordem junta o peso do motivo com o tamanho da frota: uma frota grande comprando na concorrência '
+                'vem antes de um cliente pequeno. Para ver só um grupo, use o filtro abaixo.</div>', unsafe_allow_html=True)
+            pc = st.columns(len(_cats_ord))
+            for i, c in enumerate(_cats_ord):
+                with pc[i]:
+                    st.markdown(f'<div class="kpi-card"><div class="kpi-label">{c}</div><div class="kpi-value">{int(_cont.get(c, 0))}</div></div>', unsafe_allow_html=True)
+            cats_sel = st.multiselect("Grupos na lista", _cats_ord, default=_cats_ord[:5], key="v360_cats")
+            pool = radar_base[radar_base["Categoria"].isin(cats_sel)].sort_values("Prioridade", ascending=False).reset_index(drop=True)
+            if "Dias Sem Visita" in pool.columns:
+                # quem foi visitado nos últimos 21 dias desce na fila
+                pool["_visitado_rec"] = pool["Dias Sem Visita"].apply(lambda d: pd.notna(d) and d <= 21)
+                pool = pool.sort_values(["_visitado_rec", "Prioridade"], ascending=[True, False]).reset_index(drop=True)
+
+            if pool.empty:
+                st.info("Nenhum cliente nos grupos escolhidos.")
+            else:
+                st.caption(f"{len(pool)} clientes priorizados · o mês vira 4 listas de até 12 (uma por semana), sem repetir cliente.")
+                tabs_semana = st.tabs([f"Semana {i+1}" for i in range(4)])
+                _msgs = {
+                    "🚨 Recuperar": "Olá! Aqui é da Comercial De Nigris. Vi que vocês renovaram parte da frota recentemente — queria entender como foi e mostrar as condições que temos hoje para as próximas unidades.",
+                    "📝 Cadastrar": "Olá! Aqui é da Comercial De Nigris. Obrigado pela confiança nas últimas compras! Sou o consultor responsável pela sua região e quero acompanhar vocês de perto.",
+                    "🆕 Conquistar": "Olá! Aqui é da Comercial De Nigris, concessionária Mercedes-Benz. Atendo a sua região e gostaria de apresentar nossas condições para a renovação da frota de vocês.",
+                    "⏰ Recompra": "Olá! Aqui é da Comercial De Nigris. Pelo histórico da frota de vocês, está chegando o momento de renovação — posso preparar uma proposta?",
+                    "💤 Reativar": "Olá! Aqui é da Comercial De Nigris. Faz um tempo que não conversamos — temos novidades e condições especiais para a frota de vocês.",
+                }
+                import urllib.parse as _uq
+                todas_semanas_frames = []
+                for w in range(4):
+                    bloco = pool.iloc[w*12:(w+1)*12].reset_index(drop=True)
+                    todas_semanas_frames.append(bloco.assign(Semana=f"Semana {w+1}"))
+                    with tabs_semana[w]:
+                        if bloco.empty:
+                            st.info("Sem clientes suficientes para completar esta semana com o filtro atual.")
+                            continue
+                        for idx, row in bloco.iterrows():
+                            tag_visita = ""
+                            if "Dias Sem Visita" in bloco.columns:
+                                if pd.notna(row.get("Última Visita")):
+                                    dv = int(row["Dias Sem Visita"])
+                                    tag_visita = f' · 🕓 visitado há {dv}d'
+                                else:
+                                    tag_visita = ' · 🚫 nunca visitado'
+                            titulo = f"{idx+1}. {row['Categoria']} · {row['Nome']} — {row['Cidade']}"
+                            if row["Conc_P"]:
+                                titulo += f" · {row['Conc_P']} na concorrência"
+                            with st.expander(titulo + tag_visita):
+                                st.markdown(f"**Por quê agora:** {row['Por Quê Agora']}")
+                                st.markdown(f"**Quem procurar:** {row['Sócio/Decisor Principal']}"
+                                            + (f" ({row['Cargo Decisor']})" if row['Cargo Decisor'] not in ('—', '') else "")
+                                            + (f" · 📱 {row['Tel. Decisor']}" if row['Tel. Decisor'] else ""))
+                                if row["Todos os Sócios"] != "—":
+                                    st.caption(f"Sócios/decisores: {row['Todos os Sócios']}")
+                                st.markdown(f"**Endereço:** {row['Endereço Completo']}  ·  **CNPJ:** {row['CNPJ']}")
+                                st.markdown(f"**Histórico:** {row['Total Compras']} compra(s) · última {row['Último Modelo']} em "
+                                            f"{pd.Timestamp(row['Última Compra']).strftime('%m/%Y')} pela **{row['Última Concessionária']}**"
+                                            + (" _(já comprou de nós)_" if row["Comprou De Nigris Antes"] == "✅ Sim" else " _(nunca comprou de nós)_"))
+                                with st.popover("📜 Histórico completo"):
+                                    st.write(row["Histórico Completo"].replace(" | ", "\n\n"))
+                                msg_wa = _uq.quote(_msgs.get(row["Categoria"], _msgs["🆕 Conquistar"]))
+                                gq = _uq.quote(str(row["Endereço Completo"]).replace("CEP: ", ""))
+                                b1, b2, b3 = st.columns(3)
+                                with b1:
+                                    if row["Tel. Decisor (wa)"]:
+                                        st.link_button("💬 WhatsApp do decisor", f"https://wa.me/{row['Tel. Decisor (wa)']}?text={msg_wa}", use_container_width=True)
+                                with b2:
+                                    if row["Tel. Geral (wa)"]:
+                                        st.link_button("💬 WhatsApp da empresa", f"https://wa.me/{row['Tel. Geral (wa)']}?text={msg_wa}", use_container_width=True)
+                                with b3:
+                                    st.link_button("🗺️ Google Maps", f"https://www.google.com/maps/search/?api=1&query={gq}", use_container_width=True)
+                        _exportar_xlsx(bloco, f"plano_semana{w+1}_{cons_v360}.xlsx", f"📥 Exportar Semana {w+1} (xlsx)", key_extra=f"sem{w+1}")
+                mes_completo = pd.concat(todas_semanas_frames, ignore_index=True)
+                if not mes_completo.empty:
+                    cols_mes = ["Semana"] + [c for c in COLS_EXPORT if c in mes_completo.columns]
+                    buf_mes = BytesIO(); mes_completo[cols_mes].to_excel(buf_mes, index=False, engine="openpyxl"); buf_mes.seek(0)
+                    st.download_button("📥 Exportar o mês inteiro (4 semanas)", buf_mes, file_name=f"plano_mes_{cons_v360}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="dl_mes_completo")
+
+    # ══════════════════════════════════════════════════════════
+    # ABA: VENDAS PERDIDAS — quem comprou na concorrência dentro da área
+    # ══════════════════════════════════════════════════════════
+    with tab_perdidas:
+        if univ_p.empty:
+            st.info("Sem emplacamentos na área no período.")
+        else:
+            _conc_area = univ_p[~is_denigris(univ_p["Concessionário"])]
+            st.markdown(f'<div class="alert-red" style="background:#fdecea;border-left:4px solid #d93025;padding:10px 14px;border-radius:10px;">'
+                        f'💸 <b>{_fmt(len(_conc_area))} veículos</b> foram emplacados na concorrência na sua área nos {sel_per_v.lower()} '
+                        f'— <b>{_fmt(_conc_area["CNPJ_NORM"].nunique())} clientes</b>. Desses, <b>{_fmt(n_perd_mb)}</b> são Mercedes-Benz vendidos por outra concessionária '
+                        f'(o cliente já escolheu a marca — perdemos no atendimento/condição) e <b>{_fmt(len(_conc_area) - n_perd_mb)}</b> de outras marcas. '
+                        f'Market share De Nigris: <b>{share_p}%</b> do total · <b>{share_mb_p}%</b> das Mercedes.</div>',
+                        unsafe_allow_html=True)
+            g1, g2 = st.columns(2)
+            with g1:
+                top_c = _conc_area["Concessionário"].fillna("—").value_counts().head(8)[::-1]
+                fig_pc = go.Figure(go.Bar(x=top_c.values, y=[str(i)[:38] for i in top_c.index], orientation="h", marker_color="#d93025"))
+                fig_pc.update_layout(title="Para quem estamos perdendo", height=320, margin=dict(t=40, b=10, l=10, r=10),
+                                     plot_bgcolor="#fff", paper_bgcolor="#fff", font_color="#515154")
+                st.plotly_chart(fig_pc, use_container_width=True)
+            with g2:
+                top_m = _conc_area["Modelo"].fillna("—").value_counts().head(8)[::-1]
+                fig_pm = go.Figure(go.Bar(x=top_m.values, y=[str(i)[:38] for i in top_m.index], orientation="h", marker_color="#86868b"))
+                fig_pm.update_layout(title="Modelos que o cliente levou na concorrência", height=320, margin=dict(t=40, b=10, l=10, r=10),
+                                     plot_bgcolor="#fff", paper_bgcolor="#fff", font_color="#515154")
+                st.plotly_chart(fig_pm, use_container_width=True)
+            perd = radar_base[radar_base["Conc_P"] > 0].sort_values(["Na Carteira", "Conc_P"], ascending=[False, False]).copy() if not radar_base.empty else pd.DataFrame()
+            if not perd.empty:
+                so_cart = st.toggle("Mostrar só clientes da minha carteira (🚨 os mais urgentes)", value=False, key="v360_perd_cart")
+                if so_cart:
+                    perd = perd[perd["Na Carteira"]]
+                perd_show = perd[["Nome", "Cidade", "Na Carteira", "Conc_P", "DN_P", "Concorrente_P", "Modelos_Conc_P",
+                                  "Sócio/Decisor Principal", "Tel. Decisor", "Tel. Geral"]].rename(columns={
+                    "Conc_P": "Na concorrência", "DN_P": "Com a De Nigris", "Concorrente_P": "Concorrente principal",
+                    "Modelos_Conc_P": "Modelos levados", "Sócio/Decisor Principal": "Decisor"})
+                perd_show["Na Carteira"] = perd_show["Na Carteira"].map({True: "🚨 Sim", False: "Não"})
+                st.dataframe(perd_show, use_container_width=True, hide_index=True)
+                _exportar_xlsx(perd.rename(columns={}), f"vendas_perdidas_{cons_v360}.xlsx", "📥 Exportar vendas perdidas (xlsx)", key_extra="perd")
+
 
     # ══════════════════════════════════════════════════════════
     # ABA: MINHA CARTEIRA — a carteira também é oportunidade
@@ -4784,6 +5007,8 @@ elif pagina == "vendedor360":
                 emp_full_agg = pd.DataFrame(columns=["CNPJ_NORM","UltimaCompraFull","TotalComprasFull"])
 
             cart_join = cart_v.merge(emp_full_agg, on="CNPJ_NORM", how="left")
+            cart_join["ConcPeriodo"] = cart_join["CNPJ_NORM"].map(agg_p["Conc_P"]).fillna(0).astype(int)
+            cart_join["DNPeriodo"] = cart_join["CNPJ_NORM"].map(agg_p["DN_P"]).fillna(0).astype(int)
 
             def _meses_sem(d):
                 if pd.isna(d): return None
@@ -4824,7 +5049,8 @@ elif pagina == "vendedor360":
 
             st.markdown('<div class="alert-blue">💡 A carteira também é oportunidade: os clientes abaixo já são "seus" — não exigem prospecção fria, só reativação.</div>', unsafe_allow_html=True)
 
-            sub_inat, sub_nunca, sub_todos = st.tabs([f"🔴 Inativos +{limite_meses}m ({n_inativos_c})", f"⚪ Nunca Compraram ({n_nunca_c})", f"📋 Carteira Completa ({total_c})"])
+            cart_na_conc = cart_join[cart_join["ConcPeriodo"] > 0]
+            sub_conc, sub_inat, sub_nunca, sub_todos = st.tabs([f"🚨 Comprando na concorrência ({len(cart_na_conc)})", f"🔴 Inativos +{limite_meses}m ({n_inativos_c})", f"⚪ Nunca Compraram ({n_nunca_c})", f"📋 Carteira Completa ({total_c})"])
 
             def _show_cart(df_show, cols_extra_nome=True):
                 d = df_show.copy()
@@ -4833,12 +5059,13 @@ elif pagina == "vendedor360":
                 cols.append("CPF/CNPJ")
                 if col_cidade_cart: cols.append(col_cidade_cart)
                 if col_tel_cart: cols.append(col_tel_cart)
-                cols += [c for c in ["UltimaCompraFull","MesesSemComprar","TotalComprasFull","NaAreaOperacional"] if c in d.columns]
+                cols += [c for c in ["UltimaCompraFull","MesesSemComprar","TotalComprasFull","DNPeriodo","ConcPeriodo","NaAreaOperacional"] if c in d.columns]
                 cols = [c for c in cols if c in d.columns]
                 d = d[cols].rename(columns={
                     col_nome_cart: "Nome", col_cidade_cart: "Cidade", col_tel_cart: "Telefone",
                     "UltimaCompraFull": "Última Compra", "MesesSemComprar": "Meses Sem Comprar",
                     "TotalComprasFull": "Total Compras", "NaAreaOperacional": "Na Área Operacional",
+                    "DNPeriodo": f"De Nigris ({sel_per_v.lower()})", "ConcPeriodo": f"Concorrência ({sel_per_v.lower()})",
                 })
                 if "Última Compra" in d.columns:
                     d["Última Compra"] = pd.to_datetime(d["Última Compra"], errors="coerce").dt.strftime("%d/%m/%Y")
@@ -4846,6 +5073,16 @@ elif pagina == "vendedor360":
                     d["Na Área Operacional"] = d["Na Área Operacional"].map({True:"✅ Sim", False:"⚠️ Não"}).fillna("❓ Sem CEP")
                 st.dataframe(d, use_container_width=True, hide_index=True)
                 return d
+
+            with sub_conc:
+                if cart_na_conc.empty:
+                    st.success("Nenhum cliente da carteira comprou na concorrência no período. 👏")
+                else:
+                    st.caption("São clientes seus que continuam comprando caminhão — só que de outra concessionária. É a recuperação mais rápida.")
+                    d0 = _show_cart(cart_na_conc.sort_values("ConcPeriodo", ascending=False))
+                    buf0 = BytesIO(); d0.to_excel(buf0, index=False, engine="openpyxl"); buf0.seek(0)
+                    st.download_button("📥 Exportar (xlsx)", buf0, file_name=f"carteira_na_concorrencia_{cons_v360}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="dl_cart_conc")
 
             with sub_inat:
                 if inativos_c.empty:
@@ -4897,72 +5134,12 @@ elif pagina == "vendedor360":
             filtro_status = st.multiselect("Filtrar status", radar_base["Status"].unique().tolist(),
                                             default=radar_base["Status"].unique().tolist(), key="v360_filtro")
             radar_f = radar_base[radar_base["Status"].isin(filtro_status)].sort_values("Score", ascending=False).copy()
-            radar_show = radar_f[["Nome","Cidade","Score","Status","Previsão","Meses Sem Comprar","Total Compras",
-                                   "Última Concessionária","Sócio/Decisor Principal","Na Carteira"]].copy()
+            radar_show = radar_f[["Nome","Cidade","Categoria","Score","Status","Previsão","Meses Sem Comprar","Total Compras",
+                                   "Conc_P","Última Concessionária","Sócio/Decisor Principal","Na Carteira"]].rename(columns={"Conc_P": "Na concorrência (período)"}).copy()
             radar_show["Na Carteira"] = radar_f.apply(lambda r: "✅ Sim" if r["Na Carteira"] else "⚠️ Não", axis=1)
             st.dataframe(radar_show, use_container_width=True, hide_index=True)
             _exportar_xlsx(radar_f, f"radar_completo_{cons_v360}.xlsx", "📥 Exportar radar completo (xlsx)")
 
-    # ══════════════════════════════════════════════════════════
-    # ABA: PROSPECÇÃO — 4 listas semanais de 12 clientes (1 mês)
-    # ══════════════════════════════════════════════════════════
-    with tab_r3:
-        st.caption("O mês é dividido em 4 listas de até 12 clientes — uma por semana — para não repetir visita e cobrir o máximo de propensão possível.")
-        incluir_mornos = st.checkbox("Incluir também 🟡 Mornos para completar as listas", value=True, key="v360_incl_mornos")
-        status_alvo = ["🔥 Quente"] + (["🟡 Morno"] if incluir_mornos else [])
-        pool = radar_base[radar_base["Status"].isin(status_alvo)].sort_values("Score", ascending=False).reset_index(drop=True) if not radar_base.empty else pd.DataFrame()
-
-        if pool.empty:
-            st.info("Nenhum cliente 🔥/🟡 no momento com os filtros atuais. Revise o filtro de cidade ou marque 'incluir mornos'.")
-        else:
-            st.markdown(f'<div class="alert-green">🎯 <strong>{len(pool)} clientes</strong> disponíveis para compor as 4 listas do mês</div>', unsafe_allow_html=True)
-            if "Dias Sem Visita" in pool.columns:
-                pool["_nunca_ou_atrasado"] = pool["Dias Sem Visita"].apply(lambda d: pd.isna(d) or d > 21)
-
-            semanas_labels = [f"Semana {i+1}" for i in range(4)]
-            tabs_semana = st.tabs(semanas_labels)
-            msg_wa_v = "Olá! Entro em contato da Comercial De Nigris para conversar sobre a frota da sua empresa."
-            todas_semanas_frames = []
-
-            for w in range(4):
-                bloco = pool.iloc[w*12:(w+1)*12].reset_index(drop=True)
-                todas_semanas_frames.append(bloco.assign(Semana=f"Semana {w+1}"))
-                with tabs_semana[w]:
-                    if bloco.empty:
-                        st.info("Sem clientes suficientes para completar esta semana com o filtro atual.")
-                        continue
-                    for idx, row in bloco.iterrows():
-                        tag_visita = ""
-                        if "Dias Sem Visita" in bloco.columns:
-                            if pd.notna(row.get("Última Visita")):
-                                dv = int(row["Dias Sem Visita"])
-                                tag_visita = f' · 🕓 última visita há {dv}d' + (' ⚠️' if dv > 21 else '')
-                            else:
-                                tag_visita = ' · 🚫 nunca visitado ⚠️'
-                        with st.expander(f"{idx+1}. {row['Nome']} — {row['Status']} (score {row['Score']:.0f}){tag_visita}"):
-                            st.markdown(f"**Endereço:** {row['Endereço Completo']}")
-                            st.markdown(f"**CNPJ:** {row['CNPJ']}  ·  **Na carteira:** {'✅ Sim' if row['Na Carteira'] else '⚠️ Não — oportunidade nova'}")
-                            st.markdown(f"**Por quê agora:** {row['Motivo']}")
-                            st.markdown(f"**Última compra:** {row['Último Modelo']} em {pd.Timestamp(row['Última Compra']).strftime('%m/%Y')} pela **{row['Última Concessionária']}**"
-                                        + (" _(comprou de nós antes)_" if row["Comprou De Nigris Antes"]=="✅ Sim" else " _(comprou de concorrente)_"))
-                            st.markdown(f"**Histórico completo:** {row['Histórico Completo']}")
-                            if row["Todos os Sócios"] != "—":
-                                st.markdown(f"**Sócios/decisores:** {row['Todos os Sócios']}")
-                            cbtn1, cbtn2 = st.columns(2)
-                            with cbtn1:
-                                if row["Tel. Decisor (wa)"]:
-                                    st.markdown(f'<a href="https://wa.me/{row["Tel. Decisor (wa)"]}?text={msg_wa_v}" target="_blank" class="contact-btn btn-whatsapp" style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;">💬 WhatsApp decisor ({row["Tel. Decisor"]})</a>', unsafe_allow_html=True)
-                            with cbtn2:
-                                if row["Tel. Geral (wa)"]:
-                                    st.markdown(f'<a href="https://wa.me/{row["Tel. Geral (wa)"]}?text={msg_wa_v}" target="_blank" class="contact-btn btn-whatsapp" style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:12px;">💬 WhatsApp geral ({row["Tel. Geral"]})</a>', unsafe_allow_html=True)
-                    _exportar_xlsx(bloco, f"prospeccao_semana{w+1}_{cons_v360}.xlsx", f"📥 Exportar Semana {w+1} (xlsx)", key_extra=f"sem{w+1}")
-
-            if any(not f.empty for f in todas_semanas_frames):
-                mes_completo = pd.concat(todas_semanas_frames, ignore_index=True)
-                cols_mes = ["Semana"] + [c for c in COLS_EXPORT if c in mes_completo.columns]
-                buf_mes = BytesIO(); mes_completo[cols_mes].to_excel(buf_mes, index=False, engine="openpyxl"); buf_mes.seek(0)
-                st.download_button("📥 Exportar as 4 semanas juntas (xlsx)", buf_mes, file_name=f"prospeccao_mes_{cons_v360}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="dl_mes_completo")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PÁGINA: ADMIN
