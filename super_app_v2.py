@@ -2754,6 +2754,61 @@ def camadas_google(m):
         'style="position:absolute;left:8px;bottom:22px;z-index:1000;height:18px;pointer-events:none;">'))
     return True, ""
 
+# ════════════════════════════════════════════════════════════════
+# EXCLUSÕES DA GESTÃO — clientes (ex.: locadoras) que NÃO aparecem para vendedor.
+# Gestor/gerente continuam vendo. Guardado no GitHub numa branch separada
+# ("dados-gestao") → salvar não reinicia o app.
+# ════════════════════════════════════════════════════════════════
+_EXCL_BRANCH = "dados-gestao"
+_EXCL_ARQ = "data/exclusoes.json"
+
+@st.cache_resource(show_spinner=False)
+def _excl_store():
+    store = {"itens": {}, "sha": None, "erro": "", "lock": _threading.Lock()}
+    try:
+        dados, sha = _gh_json_branch_ler(_repo_acessos(), _EXCL_BRANCH, _EXCL_ARQ)
+        if isinstance(dados, dict):
+            store["itens"] = dict(dados.get("itens", {})); store["sha"] = sha
+    except Exception as e:
+        store["erro"] = f"Leitura das exclusões: {e}"
+    return store
+
+def cnpjs_excluidos():
+    st_ = _excl_store()
+    with st_["lock"]:
+        return set(st_["itens"].keys())
+
+def salvar_exclusoes(itens):
+    st_ = _excl_store()
+    with st_["lock"]:
+        st_["itens"] = dict(itens)
+    ok, sha, err = _gh_json_branch_gravar(_repo_acessos(), _EXCL_BRANCH, _EXCL_ARQ,
+                                         {"atualizado_em": _agora_brt().strftime("%Y-%m-%dT%H:%M:%S"), "itens": dict(itens)},
+                                         st_.get("sha"), "Exclusões da gestão")
+    st_["sha"] = sha if ok else None
+    st_["erro"] = "" if ok else f"Exclusão vale agora, mas não foi salva no GitHub ({err}) — some se o app reiniciar."
+    return ok
+
+def aplicar_exclusoes(df_emp, df_cart, perfil):
+    """Excluídos ficam com 'GESTÃO' (nenhum vendedor). Para vendedor, somem de todas as telas."""
+    excl = cnpjs_excluidos()
+    if not excl or df_emp is None:
+        return df_emp, df_cart
+    m = df_emp["CNPJ_NORM"].isin(excl)
+    if m.any() and "RESP_KEYS" in df_emp.columns:
+        df_emp = df_emp.copy(deep=False)
+        df_emp["RESP_KEY"] = df_emp["RESP_KEY"].where(~m, None)
+        df_emp["RESP_KEYS"] = df_emp["RESP_KEYS"].where(~m, "|GESTÃO|")
+        df_emp["RESP_ORIGEM"] = df_emp["RESP_ORIGEM"].where(~m, "Exclusão da gestão")
+        _rm = dict(st.session_state.get("_resp_map") or {})
+        for c in excl: _rm[c] = "Gestão (excluído dos vendedores)"
+        st.session_state["_resp_map"] = _rm
+    if perfil not in ("gestor", "gerente"):
+        df_emp = df_emp[~m]
+        if df_cart is not None and "CNPJ_NORM" in df_cart.columns:
+            df_cart = df_cart[~df_cart["CNPJ_NORM"].isin(excl)]
+    return df_emp, df_cart
+
 def geo_garantir_ceps(ceps_prioritarios):
     """Põe na fila os CEPs ainda sem localização (na ordem recebida) e liga o trabalhador em segundo plano."""
     store = _geo_store()
@@ -2960,6 +3015,7 @@ if st.session_state.df_emp_list and st.session_state.get("_emp_merged_len") != _
     st.session_state["_emp_merged_len"] = _emp_list_len
 df_emp = st.session_state.get("_df_emp_merged") if st.session_state.df_emp_list else None
 df_emp = aplicar_responsaveis(df_emp, df_area, df_cart)
+df_emp, df_cart = aplicar_exclusoes(df_emp, df_cart, perfil)
 
 PAGINAS_GESTOR  = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun."),("vendedor360","🧭","Vend. 360"),("mapa","🗺️","Mapa"),("assistente_ia","🤖","Assistente IA"),("admin","⚙️","Admin")]
 PAGINAS_GERENTE = [("busca","🔍","Busca"),("emplacamentos","📍","Emplacam."),("carteira","📋","Carteira"),("gestao","📈","Gestão"),("oportunidades","🎯","Oportun."),("vendedor360","🧭","Vend. 360"),("mapa","🗺️","Mapa"),("assistente_ia","🤖","Assistente IA")]
@@ -5151,7 +5207,52 @@ elif pagina == "admin":
     st.markdown("""<div class="page-header"><h1>⚙️ Administração</h1>
     <p>Usuários · Dados · Configurações</p></div>""", unsafe_allow_html=True)
 
-    tab_u, tab_d, tab_cfg = st.tabs(["👥 Usuários","📂 Gerenciar Dados","🤖 Configurações"])
+    tab_u, tab_d, tab_excl, tab_cfg = st.tabs(["👥 Usuários","📂 Gerenciar Dados","🚫 Exclusões","🤖 Configurações"])
+
+    # ── TAB EXCLUSÕES: clientes que não aparecem para vendedor (ex.: locadoras) ──
+    with tab_excl:
+        st.markdown('<div class="sec-title">🚫 Clientes excluídos dos vendedores</div>', unsafe_allow_html=True)
+        st.caption("Use para locadoras e contas tratadas pela gestão. O cliente some de todas as telas dos vendedores "
+                   "(busca, carteira, oportunidades, Vendedor 360, mapa) e não é atribuído a ninguém. Gestor e gerente continuam vendo, marcado como \"Gestão\".")
+        _st_ex = _excl_store()
+        _itens = dict(_st_ex["itens"])
+        with st.form("form_excl", clear_on_submit=True):
+            ce1, ce2 = st.columns([1.2, 2])
+            with ce1:
+                novo_cnpj = st.text_input("CNPJ ou CPF", placeholder="00.000.000/0000-00")
+            with ce2:
+                novo_motivo = st.text_input("Motivo", placeholder="Ex.: locadora — atendida pela gestão")
+            add_ex = st.form_submit_button("➕ Excluir dos vendedores", use_container_width=True)
+        if add_ex:
+            _cn = re.sub(r"\D", "", novo_cnpj or "")
+            if len(_cn) not in (11, 14):
+                st.error("Digite um CNPJ (14 dígitos) ou CPF (11 dígitos) válido.")
+            else:
+                _nome_ex = "—"
+                if df_emp is not None:
+                    _hit = df_emp[df_emp["CNPJ_NORM"] == _cn]
+                    if not _hit.empty: _nome_ex = safe_str(_hit["NOMEPROPRIETARIO"].iloc[0], "—")
+                _itens[_cn] = {"nome": _nome_ex, "motivo": (novo_motivo or "").strip() or "—",
+                               "por": st.session_state.user, "em": _agora_brt().strftime("%d/%m/%Y %H:%M")}
+                ok = salvar_exclusoes(_itens)
+                (st.success if ok else st.warning)(f"✅ {_nome_ex} excluído dos vendedores." if ok else _st_ex["erro"])
+                st.rerun()
+        if _itens:
+            _vol = df_emp.groupby("CNPJ_NORM").size() if df_emp is not None else pd.Series(dtype=int)
+            _ano = df_emp[df_emp["Data emplacamento"].dt.year == pd.Timestamp.now().year].groupby("CNPJ_NORM").size() if df_emp is not None else pd.Series(dtype=int)
+            _tab = pd.DataFrame([{"CNPJ": k, "Cliente": v.get("nome", "—"), "Motivo": v.get("motivo", "—"),
+                                  "Emplacamentos (total)": int(_vol.get(k, 0)), f"Em {pd.Timestamp.now().year}": int(_ano.get(k, 0)),
+                                  "Incluído por": v.get("por", "—"), "Em": v.get("em", "—")} for k, v in _itens.items()])
+            st.dataframe(_tab, use_container_width=True, hide_index=True)
+            _rem = st.multiselect("Voltar a mostrar para os vendedores", list(_itens.keys()),
+                                  format_func=lambda k: f"{_itens[k].get('nome', k)} ({k})", key="excl_remover")
+            if _rem and st.button("↩️ Remover da exclusão", key="btn_excl_rem"):
+                for k in _rem: _itens.pop(k, None)
+                salvar_exclusoes(_itens); st.rerun()
+        else:
+            st.info("Nenhum cliente excluído ainda.")
+        if _st_ex.get("erro"):
+            st.warning("⚠️ " + _st_ex["erro"])
 
     # ── TAB USUÁRIOS ──
     with tab_u:
