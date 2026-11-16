@@ -98,11 +98,11 @@
     "ultimo_acesso": "2026-08-31T15:46:57"
   },
   "SIMONE": {
-    "senha_hash": "d85c575934598f448f35db5f8080501bf4876753eeb39d713f043430a63a5b96",
+    "senha_hash": "pbkdf2$210000$ed48f22eae00c6b87c1911922d9aa9b7$5d30aaf9f3a062e12e8ccfd84cd45b3d45036a2c341a6987421b68519e8365b7",
     "perfil": "vendedor",
     "nome": "Simone Tauber",
     "consultor_key": "SIMONE A. TAUBER LIVIDATTI",
-    "ultimo_acesso": "2026-08-19T13:36:23"
+    "ultimo_acesso": "2026-11-16T15:24:58"
   },
   "REGIANE": {
     "senha_hash": "pbkdf2$210000$88814581d1cecffe2bc3c5b3ed4a2ea5$acd34f0919dd0cf9b5ab2f466e98505e7828b067c39ebba5fe8788368fc3f0eb",
