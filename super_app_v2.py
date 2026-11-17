@@ -1405,10 +1405,38 @@ def _load_carteira_base(src, _mt=0):
 def load_carteira(src):
     return _load_carteira_base(src, _mtime(src)).copy(deep=False)
 
+_RX_SEP_VEND = r"\s*/\s*"
+
+def _limpar_vendedor_carteira(v):
+    """'CAMINHÃO - NOVO / Frio / JANAÍNA BROGLIO' → 'JANAÍNA BROGLIO' (o export do CRM traz segmento/temperatura antes)."""
+    s = "" if v is None or (isinstance(v, float) and np.isnan(v)) else str(v).strip()
+    if s.lower() in ("", "nan", "none"):
+        return ""
+    return re.split(_RX_SEP_VEND, s)[-1].strip().upper()
+
+def _classif_carteira(v):
+    s = "" if v is None or (isinstance(v, float) and np.isnan(v)) else str(v).strip()
+    partes = re.split(_RX_SEP_VEND, s)
+    return partes[-2].strip().title() if len(partes) >= 3 else ""
+
+def _padronizar_colunas_carteira(df):
+    df.columns = [str(c).strip() for c in df.columns]
+    ren = {}
+    for c in df.columns:
+        cu = unicodedata.normalize("NFKD", c).encode("ascii", "ignore").decode().upper().replace(" ", "")
+        if cu == "VENDEDOR" and c != "VENDEDOR": ren[c] = "VENDEDOR"
+        if cu in ("CPF/CNPJ", "CNPJ/CPF", "CPFCNPJ") and c != "CPF/CNPJ": ren[c] = "CPF/CNPJ"
+    return df.rename(columns=ren)
+
 def _load_carteira_raw(src):
     if isinstance(src, BytesIO): src.seek(0)
-    df = pd.read_excel(src)
-    df.columns = [c.strip() for c in df.columns]
+    df = _padronizar_colunas_carteira(pd.read_excel(src))
+    if "VENDEDOR" in df.columns and df["VENDEDOR"].astype(str).str.contains("/", regex=False).any():
+        if "VENDEDOR_ORIGINAL" not in df.columns:
+            df["VENDEDOR_ORIGINAL"] = df["VENDEDOR"]
+        if "CLASSIFICACAO" not in df.columns:
+            df["CLASSIFICACAO"] = df["VENDEDOR"].map(_classif_carteira)
+        df["VENDEDOR"] = df["VENDEDOR"].map(_limpar_vendedor_carteira)
     df["CPF/CNPJ"]  = df["CPF/CNPJ"].astype(str).str.strip()
     df["CNPJ_NORM"] = df["CPF/CNPJ"].astype(str).str.replace(r"\D","",regex=True)
     df["VENDEDOR"]  = df.get("VENDEDOR", pd.Series(dtype=str)).astype(str).str.strip()
@@ -5512,6 +5540,79 @@ elif pagina == "admin":
                                        file_name=f"EMPLACAMENTOS_{_fim:%Y%m%d}.parquet", key="dl_emp_parquet")
             except Exception as _e:
                 st.error(f"Não consegui processar o relatório: {_e}")
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ══════════ ATUALIZAÇÃO DA CARTEIRA DE VENDEDORES ══════════
+        st.markdown('<div class="sec-title">📋 Atualizar carteira de vendedores</div>', unsafe_allow_html=True)
+        st.caption("Selecione a planilha de carteira exportada do CRM, do jeito que veio. O app limpa o nome do vendedor "
+                   "(tira o \"CAMINHÃO - NOVO / Frio /\" da frente), guarda a temperatura (Frio, Bolsão, Quente…) e mostra "
+                   "o que muda antes de gravar.")
+        up_cart_n = st.file_uploader("Carteira (.xlsx)", type=["xlsx"], key="up_carteira_nova")
+        if up_cart_n is not None:
+            try:
+                _cart_bytes_in = up_cart_n.getvalue()
+                _novo_c = _load_carteira_raw(BytesIO(_cart_bytes_in))
+                if "CPF/CNPJ" not in _novo_c.columns or "VENDEDOR" not in _novo_c.columns:
+                    st.error("Não achei as colunas CPF/CNPJ e Vendedor nessa planilha. Confira se é a exportação da carteira.")
+                    st.stop()
+                _novo_c["VENDEDOR"] = _novo_c["VENDEDOR"].replace({"NAN": ""})
+                _nk = lambda d: d.assign(_K=d["CNPJ_NORM"].astype(str), _V=norm_str_series(d["VENDEDOR"].astype(str)))
+                _n = _nk(_novo_c); _n_ok = _n[_n["_K"].str.len() >= 11]
+                _a = _nk(df_cart) if df_cart is not None else pd.DataFrame(columns=["_K", "_V"])
+                _ka, _kn = set(_a["_K"]), set(_n_ok["_K"])
+                _mapa_a = _a.drop_duplicates("_K").set_index("_K")["_V"]; _mapa_n = _n_ok.drop_duplicates("_K").set_index("_K")["_V"]
+                _com = list(_ka & _kn)
+                _mud = [(k, _mapa_a[k], _mapa_n[k]) for k in _com if _mapa_a[k] != _mapa_n[k]]
+                _conhecidos = set(norm_str_series(df_area["Consultor"].astype(str))) if df_area is not None else set()
+                _conhecidos |= {norm_str(u.get("consultor_key", "")) for u in (st.session_state.get("users_db") or {}).values()}
+                _vend_n = _n_ok["_V"].value_counts()
+                _desconh = [v for v in _vend_n.index if v and v not in _conhecidos]
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Clientes na nova carteira", f"{len(_kn):,}".replace(",", "."), f"{len(_kn) - len(_ka):+,}".replace(",", "."))
+                m2.metric("Entraram", f"{len(_kn - _ka):,}".replace(",", "."))
+                m3.metric("Saíram", f"{len(_ka - _kn):,}".replace(",", "."))
+                m4.metric("Mudaram de vendedor", f"{len(_mud):,}".replace(",", "."))
+                _por_v = pd.DataFrame({"Antes": _a.drop_duplicates("_K")["_V"].value_counts(), "Agora": _n_ok.drop_duplicates("_K")["_V"].value_counts()}).fillna(0).astype(int)
+                _por_v["Diferença"] = _por_v["Agora"] - _por_v["Antes"]
+                _por_v.index = [nome_display_vendedor(v, df_area, df_cart) or v.title() for v in _por_v.index]
+                with st.expander("👥 Clientes por vendedor (antes × agora)", expanded=True):
+                    st.dataframe(_por_v.sort_values("Agora", ascending=False), use_container_width=True)
+                if "CLASSIFICACAO" in _n_ok.columns and _n_ok["CLASSIFICACAO"].astype(str).str.len().gt(0).any():
+                    st.caption("Temperatura no CRM: " + " · ".join(f"{k or 'sem'}: {v}" for k, v in _n_ok["CLASSIFICACAO"].fillna("").value_counts().items()))
+                if _mud:
+                    with st.expander(f"🔁 {len(_mud)} cliente(s) mudaram de vendedor"):
+                        _nm = _n_ok.drop_duplicates("_K").set_index("_K")["Nome"] if "Nome" in _n_ok.columns else pd.Series(dtype=str)
+                        st.dataframe(pd.DataFrame([{"Cliente": _nm.get(k, k), "CNPJ": k, "Antes": a.title(), "Agora": b.title()} for k, a, b in _mud]),
+                                     use_container_width=True, hide_index=True)
+                if _desconh:
+                    st.warning("⚠️ Vendedor(es) que não têm usuário no app nem área operacional: **"
+                               + ", ".join(f"{v.title()} ({_vend_n[v]} clientes)" for v in _desconh)
+                               + "**. Os clientes deles ficam reservados e **não aparecem para nenhum outro vendedor**. "
+                                 "Crie o usuário em Admin → Usuários ou corrija o nome no CRM.")
+                _sem_doc = int((_n["_K"].str.len() < 11).sum())
+                if _sem_doc:
+                    st.caption(f"ℹ️ {_sem_doc} linha(s) sem CPF/CNPJ foram ignoradas no cruzamento.")
+                if st.button("✅ Confirmar e atualizar a carteira", type="primary", use_container_width=True, key="btn_conf_cart"):
+                    _salvar = _novo_c.drop(columns=[c for c in ("CNPJ_NORM", "CEP_norm") if c in _novo_c.columns])
+                    _buf = BytesIO(); _salvar.to_excel(_buf, index=False, engine="openpyxl"); _xlsx = _buf.getvalue()
+                    st.session_state.df_cart = load_carteira(BytesIO(_xlsx))
+                    _tk = _secret("GH_TOKEN", ""); _repo_app = _secret("APP_REPO", "") or "denigrisadm/denigris-app"
+                    _br_app = _secret("APP_BRANCH", "") or "main"
+                    if _tk:
+                        _ok, _err = _gh_put_grande(_repo_app, _tk, _br_app, "data/CARTEIRA.xlsx", _xlsx,
+                                                   f"Atualiza carteira: {len(_kn)} clientes (+{len(_kn - _ka)} / -{len(_ka - _kn)} / {len(_mud)} trocas)")
+                    else:
+                        _ok, _err = False, "GH_TOKEN não configurado"
+                    if _ok:
+                        st.success("✅ Carteira gravada no GitHub. O app reinicia sozinho em ~1 minuto e passa a valer para todos.")
+                    else:
+                        st.warning(f"Carteira atualizada só nesta sessão — NÃO foi gravada no GitHub ({_err}). Baixe abaixo e confira o GH_TOKEN.")
+                    st.download_button("⬇️ Baixar carteira tratada (.xlsx)", _xlsx, file_name="CARTEIRA.xlsx", key="dl_cart_nova")
+            except Exception as _e:
+                st.error(f"Não consegui ler a carteira: {_e}")
+        if df_cart is not None:
+            _buf_at = BytesIO(); df_cart.drop(columns=[c for c in ("CNPJ_NORM", "CEP_norm") if c in df_cart.columns]).to_excel(_buf_at, index=False, engine="openpyxl")
+            st.download_button("💾 Baixar carteira atual (backup)", _buf_at.getvalue(), file_name="CARTEIRA_atual.xlsx", key="dl_cart_atual")
         st.markdown("<br>", unsafe_allow_html=True)
 
         st.markdown('<div class="sec-title">📤 Upload Manual (temporário)</div>', unsafe_allow_html=True)
