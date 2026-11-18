@@ -21,11 +21,11 @@
     "ultimo_acesso": "2026-11-04T15:26:40"
   },
   "GLADSTON": {
-    "senha_hash": "1cda5da1d9897ff4f5c7be1529a708e792b4222385e99a1f42dc7fa8770f71c4",
+    "senha_hash": "pbkdf2$210000$f5ecd8eb909f9751afc65ec8690fac7d$5b83504f543a4b9dd7556e28e5aab1921595af3208cd481b44c4b7990c3791a9",
     "perfil": "vendedor",
     "nome": "Gladston Barbosa",
     "consultor_key": "GLADSTON BARBOSA",
-    "ultimo_acesso": "2026-08-25T16:58:09"
+    "ultimo_acesso": "2026-11-18T11:26:55"
   },
   "JANAINA": {
     "senha_hash": "pbkdf2$210000$30aa07280a6a41677a2af2252fae855e$6a5bbaaf0c72f060896b8e06311c685800892745cbe0fbb432aad483f714d352",
