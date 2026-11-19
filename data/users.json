@@ -91,11 +91,11 @@
     "ultimo_acesso": "2026-11-04T16:03:48"
   },
   "MARIANA": {
-    "senha_hash": "2b4673952ce88b079d15911dda99cd132137bf9123b61963f8cd734c2b16f730",
+    "senha_hash": "pbkdf2$210000$94c3abb7376d3eb1843ecf455c463eb0$6e42efa56c2fd4fdcbfeb3579ce500e6886ef9c5ffcc2e8a23e725b4b96712f5",
     "perfil": "gerente",
     "nome": "MARIANA FARIA",
     "consultor_key": "MARIANA",
-    "ultimo_acesso": "2026-08-31T15:46:57"
+    "ultimo_acesso": "2026-11-19T12:25:06"
   },
   "SIMONE": {
     "senha_hash": "pbkdf2$210000$ed48f22eae00c6b87c1911922d9aa9b7$5d30aaf9f3a062e12e8ccfd84cd45b3d45036a2c341a6987421b68519e8365b7",
