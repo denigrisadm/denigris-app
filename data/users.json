@@ -35,11 +35,11 @@
     "ultimo_acesso": "2026-11-03T10:13:21"
   },
   "LEONARDO": {
-    "senha_hash": "a0ce073d8054fe1bb21b792266aba41130a430594264827a113d1bb3e9c85f8d",
+    "senha_hash": "pbkdf2$210000$bd8012ed1fa4af0dff78b9f1d88663e9$acc7d4a4c665980d673c98e54bbb312f6117c9a9271bc8668f4a47441a66e01e",
     "perfil": "vendedor",
     "nome": "Leonardo Carneiro",
     "consultor_key": "LEONARDO CARNEIRO",
-    "ultimo_acesso": "2026-08-24T14:30:18"
+    "ultimo_acesso": "2026-11-20T08:58:47"
   },
   "PAULO": {
     "senha_hash": "f89678cc6765848121941f97f563647a0fe77cc7947842dbddb67ba8bacf3c21",
